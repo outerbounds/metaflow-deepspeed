@@ -10,5 +10,11 @@
     "fp16": {
         "enabled": true
     },
-    "zero_optimization": true
+    "zero_optimization": true,
+    "comms_logger": {
+        "enabled": true,
+        "verbose": false,
+        "prof_all": true,
+        "debug": false
+      }
 }

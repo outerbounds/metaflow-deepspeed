@@ -1,19 +1,25 @@
-from metaflow import FlowSpec, step, deepspeed, current, kubernetes
+from metaflow import FlowSpec, step, deepspeed, current, kubernetes, batch, environment
 import json
 
 N_NODES = 2
 IMAGE="eddieob/deepspeed:bert-example"
 N_GPU = 1
 MEMORY = "32000"
+SHARED_MEMORY = "8000"
 N_CPU = 8
 
-class CoreweaveBERT(FlowSpec):
+class BERT(FlowSpec):
 
     @step
     def start(self):
         self.next(self.train, num_parallel=N_NODES)
 
-    @kubernetes(image=IMAGE, gpu=N_GPU, memory=MEMORY, cpu=N_CPU)
+    @environment(vars={
+        "NCCL_DEBUG": "INFO",
+        "NCCL_SOCKET_IFNAME": "eth0",
+    })
+    @batch(image=IMAGE, gpu=N_GPU, memory=MEMORY, cpu=N_CPU, shared_memory=SHARED_MEMORY)
+    # @kubernetes(image=IMAGE, gpu=N_GPU, memory=MEMORY, cpu=N_CPU)
     @deepspeed
     @step
     def train(self):
@@ -33,4 +39,4 @@ class CoreweaveBERT(FlowSpec):
         pass
         
 if __name__ == "__main__":
-    CoreweaveBERT()
+    BERT()

@@ -1,3 +1,3 @@
 ```
-python flow.py --environment=pypi run 
+python flow.py run 
 ```

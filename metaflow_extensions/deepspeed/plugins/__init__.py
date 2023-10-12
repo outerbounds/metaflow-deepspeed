@@ -45,6 +45,12 @@ class DeepspeedExecutor:
             deepspeed_args.extend(["--num_nodes", str(len(self.hosts))])
         if self.is_gpu and "--num_gpus" not in deepspeed_args:
             deepspeed_args.extend(["--num_gpus", str(self.n_slots_per_host)])
+        if "--master_addr" in deepspeed_args:
+            raise MetaflowException("Do not specify the --master_addr in your current.run.deepspeed args. Metaflow will set this for you.")
+            
+        my_ip = socket.gethostbyname(socket.gethostname())
+        deepspeed_args.extend(["--master_addr", my_ip])
+
         cmd.extend(deepspeed_args)
 
         if entrypoint is not None:
@@ -62,7 +68,7 @@ class DeepspeedExecutor:
         try:
             with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
                 while process.poll() is None:
-                    stdout = process.stdout.read1() #+ b'=='
+                    stdout = process.stdout.read1()
                     try:
                         text = stdout.decode("utf-8")
                     except UnicodeDecodeError:
@@ -145,25 +151,6 @@ class DeepspeedDecorator(ParallelDecorator):
                     self.is_gpu = False
                 break
 
-    def task_pre_step(
-        self,
-        step_name,
-        task_datastore,
-        metadata,
-        run_id,
-        task_id,
-        flow,
-        graph,
-        retry_count,
-        max_user_code_retries,
-        ubf_context,
-        inputs,
-    ):
-        if self.is_k8s:
-            self.jobset_name = "jobset-%s" % task_id.split('-')[-1]
-        elif self.is_batch:
-            raise NotImplementedError("AWS Batch is not implemented for MPI yet")
-
     def task_decorate(
         self, step_func, flow, graph, retry_count, max_user_code_retries, ubf_context
     ):
@@ -216,13 +203,10 @@ class DeepspeedDecorator(ParallelDecorator):
 
     def setup_distributed_env(self, flow, ubf_context, n_slots = 1):
         "Return a list of strings of hostnames of nodes to use for MPI"
-        if self.is_k8s:
-            return setup_mpi_kubernetes_env(flow, self.jobset_name, ubf_context, self.attributes["all_nodes_started_timeout"], self.attributes["worker_polling_freq"], n_slots)
-        elif self.is_batch:
-            raise NotImplementedError("AWS Batch is not implemented for MPI yet")
+        return setup_mpi_env(flow, ubf_context, self.attributes["all_nodes_started_timeout"], self.attributes["worker_polling_freq"], n_slots, self.is_k8s)
 
 
-def setup_mpi_kubernetes_env(run, jobset_service_name, ubf_context, all_nodes_started_timeout, interval, n_slots):
+def setup_mpi_env(run, ubf_context, all_nodes_started_timeout, interval, n_slots, is_k8s):
 
     # TODO: Generalize setup to work on AWS Batch
     # NOTE: Where jobset for @kuberentes + @parallel can automate the sshd port opening, 
@@ -231,13 +215,29 @@ def setup_mpi_kubernetes_env(run, jobset_service_name, ubf_context, all_nodes_st
     from metaflow import current, S3
     s3 = S3(run=run)
 
-    world_size = int(os.environ["WORLD_SIZE"])
+    # gather variables
+    if is_k8s:
+        world_size = int(os.environ["WORLD_SIZE"])
+        if ubf_context == UBF_CONTROL:
+            node_index = 0
+        else:
+            node_index = int(os.environ["RANK"]) + 1
+    else:  # is_batch
+        world_size = int(os.environ["AWS_BATCH_JOB_NUM_NODES"])
+        node_index = int(os.environ["AWS_BATCH_JOB_NODE_INDEX"])
+
+        # TODO: DELETE THIS
+        # set vars for deepspeed 
+        # https://github.com/microsoft/DeepSpeed/blob/a855405e0b85fdc8346ff5fc0ab4085f18d95a9a/deepspeed/comm/comm.py#L150
+        # os.environ['WORLD_SIZE'] = str(world_size)
+        # os.environ['RANK'] = str(node_index)
+
     if ubf_context == UBF_CONTROL:
-        node_index = 0
         key_push_path = "%s/control" % (MPI_PUBLIC_KEY_PATH)
     else:
-        node_index = int(os.environ["RANK"]) + 1
         key_push_path = "%s/worker/%s" % (MPI_PUBLIC_KEY_PATH, node_index)
+
+    my_ip = socket.gethostbyname(socket.gethostname())
 
     ssh_dir = os.path.expanduser("~/.ssh")
     if not os.path.exists(ssh_dir):
@@ -303,19 +303,11 @@ def setup_mpi_kubernetes_env(run, jobset_service_name, ubf_context, all_nodes_st
     result = subprocess.run(["sudo", "service", "ssh", "restart"], check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     assert result.returncode == 0, "Error restarting sshd"
 
-    # TODO: figure out why RANK var set in jobset thing isn't being adjusted here yet...
-    node_index = int(os.environ["RANK"])
-    if ubf_context != UBF_CONTROL:
-        node_index += 1
-    num_nodes = int(os.environ["WORLD_SIZE"])
-    my_ip = socket.gethostbyname(socket.gethostname())
-    username = subprocess.run(["whoami"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=True).stdout.decode('utf-8').strip()
-
     # Share IPs to write the hosts file
     s3.put("%s/%s" % (HOSTFILE_IP_KEY, node_index), my_ip)
     while True: 
         s3_hostfile_entry_paths = s3.list_paths([HOSTFILE_IP_KEY])
-        if len(s3_hostfile_entry_paths) == num_nodes:
+        if len(s3_hostfile_entry_paths) == world_size:
             hosts = [
                 s3.get(os.path.join(*s3obj.url.split('/')[-2:])).blob.decode('utf-8')
                 for s3obj in s3_hostfile_entry_paths

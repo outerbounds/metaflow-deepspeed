@@ -22,7 +22,7 @@ def print_volumes():
     subprocess.run(["mount"])
     print("")
 
-class CoreweaveTrainDolly(FlowSpec):
+class TrainDolly(FlowSpec):
 
     # config
     training_output_dir = Parameter(name="training_output_dir", default="training_output", help="Directory to store training output.")
@@ -120,4 +120,4 @@ class CoreweaveTrainDolly(FlowSpec):
         print(f"\n Woohoo! You've trained your own LLM! \U0001f389 \U0001f389 \U0001f389")
 
 if __name__ == '__main__':
-    CoreweaveTrainDolly()
+    TrainDolly()
