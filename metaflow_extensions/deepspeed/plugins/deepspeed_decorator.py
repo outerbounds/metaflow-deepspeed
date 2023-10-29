@@ -32,9 +32,6 @@ class DeepspeedExecutor:
         `entrypoint`: str - program to run, such as compiled binary or python script
         `entrypoint_args`: List[str] - arguments to pass after `entrypoint`
         `deepspeed_config`: ... TODO json thing
-
-        deepspeed --hostfile=myhostfile <client_entry.py> <client args> --deepspeed --deepspeed_config ds_config.json
-        deepspeed --num_gpus 8 --num_nodes 2 --master_addr machine1 train.py --config conf/mistral-micro.yaml --nnodes 2 --nproc_per_node 8 --training_arguments.fp16 true --training_arguments.per_device_train_batch_size 4 --training_arguments.deepspeed conf/deepspeed/z2-small-conf.json --run_id gpt2-micro > mistral-micro.out 2> mistral-micro.err
         """
 
         cmd = ["deepspeed"]
@@ -323,5 +320,3 @@ def setup_mpi_env(run, ubf_context, all_nodes_started_timeout, interval, n_slots
 
     s3.close()
     return hosts
-
-STEP_DECORATORS_DESC = [("deepspeed", ".DeepspeedDecorator")]

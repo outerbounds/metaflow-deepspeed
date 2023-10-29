@@ -1,11 +1,11 @@
-from metaflow import FlowSpec, step, deepspeed, current, kubernetes, batch, environment
+from metaflow import FlowSpec, step, deepspeed, current, batch, environment
 import json
 
-N_NODES = 1
+N_NODES = 2
 IMAGE="eddieob/deepspeed:6"
 N_GPU = 1
-MEMORY = "12000"
-N_CPU = 4
+MEMORY = "24000"
+N_CPU = 8
 
 class HelloDeepspeed(FlowSpec):
 
@@ -13,12 +13,8 @@ class HelloDeepspeed(FlowSpec):
     def start(self):
         self.next(self.train, num_parallel=N_NODES)
 
-    # @environment(vars={
-    #     "NCCL_DEBUG": "INFO",
-    #     "NCCL_SOCKET_IFNAME": "eth0",
-    # })
-    # @batch(image=IMAGE, gpu=N_GPU, memory=MEMORY, cpu=N_CPU)
-    @kubernetes(image=IMAGE, gpu=N_GPU, memory=MEMORY, cpu=N_CPU)
+    @environment(vars={"NCCL_SOCKET_IFNAME": "eth0"})
+    @batch(image=IMAGE, gpu=N_GPU, memory=MEMORY, cpu=N_CPU)
     @deepspeed
     @step
     def train(self):

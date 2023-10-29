@@ -44,7 +44,7 @@ class TrainDolly(FlowSpec):
 
     @deepspeed
     @kubernetes(image=IMAGE, cpu=N_CPU, gpu=N_GPU, memory=MEMORY)
-    @environment(vars = {"TOKENIZERS_PARALLELISM": "false"})
+    @environment(vars = {"TOKENIZERS_PARALLELISM": "false", "NCCL_SOCKET_IFNAME": "eth0"})
     @gpu_profile(interval=1)
     @step
     def train(self):
