@@ -1,6 +1,6 @@
 from setuptools import setup, find_namespace_packages
 
-version = "0.0.2"
+version = "0.0.3"
 
 setup(
     name="metaflow-deepspeed",
@@ -12,7 +12,5 @@ setup(
     py_modules=[
         "metaflow_extensions",
     ],
-    install_requires=[
-         "metaflow"
-    ]
+    install_requires=[]
 )
