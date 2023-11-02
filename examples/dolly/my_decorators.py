@@ -39,7 +39,8 @@ done
     "\n", " "
 )
 
-# This code is adapted from: https://github.com/outerbounds/monitorbench 
+
+# This code is adapted from: https://github.com/outerbounds/monitorbench
 class GPUProfiler:
     def __init__(self, interval=1):
         self.driver_ver, self.cuda_ver, self.error = self._read_versions()
@@ -137,7 +138,6 @@ class GPUProfiler:
             legend_items: {X: 'Same PCI', NV2: 'NVLink 2', ...}
         """
         try:
-
             import re
 
             ansi_escape = re.compile(r"(\x9B|\x1B\[)[0-?]*[ -\/]*[@-~]")
@@ -388,12 +388,9 @@ def make_card(results, artifact_name):
 
 
 def pip(libraries):
-
     def decorator(function):
-
         @wraps(function)
         def wrapper(*args, **kwargs):
-
             import subprocess
             import sys
 

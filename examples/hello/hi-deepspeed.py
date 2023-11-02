@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch
 import math
 
+
 class Polynomial3(torch.nn.Module):
     def __init__(self):
         """
@@ -21,7 +22,7 @@ class Polynomial3(torch.nn.Module):
         self.b = torch.nn.Parameter(torch.randn(()))
         self.c = torch.nn.Parameter(torch.randn(()))
         self.d = torch.nn.Parameter(torch.randn(()))
-        self.criterion = torch.nn.MSELoss(reduction='sum')
+        self.criterion = torch.nn.MSELoss(reduction="sum")
 
     def forward(self, batch):
         """
@@ -33,7 +34,7 @@ class Polynomial3(torch.nn.Module):
               This deviates from most MySubclass(nn.Module).forward funcs on the internet which typically return logits.
         """
         x, y = batch[0].cuda(), batch[1].cuda()
-        y_pred = self.a + self.b * x + self.c * x ** 2 + self.d * x ** 3
+        y_pred = self.a + self.b * x + self.c * x**2 + self.d * x**3
         loss = self.criterion(y_pred, y)
         return loss
 
@@ -41,7 +42,7 @@ class Polynomial3(torch.nn.Module):
         """
         Just like any class in Python, you can also define custom method on PyTorch modules
         """
-        return f'y = {self.a.item()} + {self.b.item()} x + {self.c.item()} x^2 + {self.d.item()} x^3'
+        return f"y = {self.a.item()} + {self.b.item()} x + {self.c.item()} x^2 + {self.d.item()} x^3"
 
 
 def init_backend(model):
@@ -52,25 +53,24 @@ def init_backend(model):
         config="ds_config.json",
     )
 
-def train(model_engine, data_loader):
 
+def train(model_engine, data_loader):
     "Distributed data parallel training, in mixed precision, with a pre-defined learning rate scheduler"
 
     for step, batch in enumerate(data_loader):
-
-        #forward() method handles scaling the loss to avoid precision loss in the gradients
+        # forward() method handles scaling the loss to avoid precision loss in the gradients
         loss = model_engine(batch)
 
-        #runs backpropagation with gradients averaged across data parallel processes
+        # runs backpropagation with gradients averaged across data parallel processes
         model_engine.backward(loss)
 
-        #weight update
+        # weight update
         model_engine.step()
 
         print("step: %s, loss: %s" % (step, loss.item()))
 
-def main():
 
+def main():
     # Create Tensors to hold input and outputs.
     x = torch.linspace(-math.pi, math.pi, 2000)
     y = torch.sin(x)
@@ -84,9 +84,10 @@ def main():
 
     # Initialize deepspeed runtime environment.
     model_engine, optimizer, _, _ = init_backend(model)
-    
+
     # Training loop, with distributed training orchestrated by deepspeed.
     train(model_engine, train_loader)
+
 
 if __name__ == "__main__":
     main()
