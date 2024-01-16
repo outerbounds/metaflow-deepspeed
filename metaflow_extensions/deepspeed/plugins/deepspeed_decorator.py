@@ -171,7 +171,7 @@ class DeepspeedDecorator(ParallelDecorator):
         for deco in decos:
             if deco.name in ["resources", "kubernetes", "batch"]:
                 compute_deco_attrs = compute_resource_attributes(
-                    decos, deco, {"cpu": "1", "gpu": "0"}
+                    decos, deco, step, {"cpu": "1", "gpu": "0"}
                 )
                 try:
                     self.n_slots = int(compute_deco_attrs["gpu"])
