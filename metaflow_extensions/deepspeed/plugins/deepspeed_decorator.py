@@ -80,8 +80,9 @@ class DeepspeedExecutor:
         # Could attach to flow.
 
         
+        env = os.environ.copy()
         with subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env
         ) as process:
             while process.poll() is None:
                 stdout = process.stdout.read1()
@@ -266,7 +267,6 @@ class DeepspeedDecorator(ParallelDecorator):
             hosts=hosts, n_slots_per_host=self.n_slots, is_gpu=self.is_gpu, flow=flow
         )
         return hosts
-
 
 def setup_mpi_env(
     run, ubf_context, all_nodes_started_timeout, interval, n_slots, is_k8s
