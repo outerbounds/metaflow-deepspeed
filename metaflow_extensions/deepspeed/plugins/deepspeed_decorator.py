@@ -23,13 +23,15 @@ MPI_PUBLIC_KEY_PATH = "public_keys"
 
 
 class DeepspeedExecutor:
-    def __init__(self, hosts, n_slots_per_host=1, is_gpu=False) -> None:
+    def __init__(self, hosts, n_slots_per_host=1, is_gpu=False, flow=None, worker_polling_freq=10) -> None:
         self.is_gpu = is_gpu
         self.n_slots_per_host = n_slots_per_host
         self.hosts = [
             h for h in hosts if h != socket.gethostbyname(socket.gethostname())
         ] + ["127.0.0.1"]
         self._scan_all_hosts()
+        self.flow = flow
+        self.worker_polling_freq = worker_polling_freq
 
     def _exec_cmd(
         self,
@@ -77,26 +79,25 @@ class DeepspeedExecutor:
         # It is nice for debugging on workstation to have cmd in logs.
         # Could attach to flow.
 
-        try:
-            with subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-            ) as process:
-                while process.poll() is None:
-                    stdout = process.stdout.read1()
-                    try:
-                        text = stdout.decode("utf-8")
-                    except UnicodeDecodeError:
-                        # TODO: This print feels bad, maybe remove - even better,
-                        # figure out how to handle the edge decoding cases gracefully.
-                        # print("UnicodeDecodeError, skipping decoding of problematic bytes: %s" % stdout)
-                        text = ""
+        
+        with subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        ) as process:
+            while process.poll() is None:
+                stdout = process.stdout.read1()
+                try:
+                    text = stdout.decode("utf-8")
+                except UnicodeDecodeError:
+                    # TODO: This print feels bad, maybe remove - even better,
+                    # figure out how to handle the edge decoding cases gracefully.
+                    # print("UnicodeDecodeError, skipping decoding of problematic bytes: %s" % stdout)
+                    text = ""
 
-                    print(text, end="", flush=True)
-                    # TODO (Eddie): what is strat for dynamic cards? stuff `text` somewhere?
+                print(text, end="", flush=True)
+                # TODO (Eddie): what is strat for dynamic cards? stuff `text` somewhere?
 
-        except subprocess.CalledProcessError as e:
-            print(e.stdout)
-            raise e
+            if process.returncode != 0:
+                raise DeepspeedException(cmd)
 
     def run(
         self,
@@ -104,8 +105,53 @@ class DeepspeedExecutor:
         entrypoint=None,
         entrypoint_args=[],
         deepspeed_config=None,
+        push_model_to_s3=False,
+        local_output_dir=None,
+        s3_output_dir=None,
     ):
-        self._exec_cmd(deepspeed_args, entrypoint, entrypoint_args, deepspeed_config)
+        from metaflow import current, S3
+        node_index = current.parallel.node_index
+        if push_model_to_s3:
+            if local_output_dir is None:
+                raise MetaflowException("current.deepspeed.run must specify local_output_dir if push_model_to_s3 is True")
+            elif s3_output_dir is None:
+                s3_output_dir = os.path.relpath(local_output_dir, os.cwd())
+        with S3(run=self.flow) as s3:
+            if node_index == 0: # control node
+                self._exec_cmd(deepspeed_args, entrypoint, entrypoint_args, deepspeed_config)
+                s3.put(CONTROL_TASK_DONE_PATH, json.dumps({DEEPSPEED_JOB_COMPLETE_VAR: True}))
+            else: # worker node
+                control_done = False
+                while not control_done:
+                    time.sleep(self.worker_polling_freq)
+                    try:
+                        control_done = json.loads(s3.get(CONTROL_TASK_DONE_PATH).blob)[DEEPSPEED_JOB_COMPLETE_VAR]
+                    except metaflow.plugins.datatools.s3.s3.MetaflowS3NotFound:
+                        control_done = False
+                        continue
+            if push_model_to_s3:
+                if not os.path.exists(local_output_dir):
+                    print(f"Deepspeed process completed, and local_output_dir `{local_output_dir}` does not exist, skipping push to S3.")
+                    return
+                if not os.path.isdir(local_output_dir):
+                    print(f"Deepspeed process completed, and local_output_dir `{local_output_dir}` is not a directory, skipping push to S3.")
+                    return
+                if len(os.listdir(local_output_dir)) == 0:
+                    print(f"Deepspeed process completed, and local_output_dir `{local_output_dir}` is empty, skipping push to S3.")
+                    return
+                filepath_tuples = []
+                for path, subdirs, files in os.walk(local_output_dir):
+                    for fname in files:
+                        filepath_tuples.append(
+                            (
+                                f"{s3_output_dir}/{str(node_index)}/{os.path.relpath(os.path.join(path, fname), local_output_dir)}",
+                                os.path.join(path, fname)
+                            )
+                        )
+                print(f"Pushing model to S3 from node {node_index}...")
+                path_result = s3.put_files(filepath_tuples)
+                print(f"Completed pushing {local_output_dir} to S3 at `{path_result[0][1].split(f'/{s3_output_dir}')[0]}`.")
+            
 
     def _scan_cmd(self, host):
         return ["ssh-keyscan", "-H", host]
@@ -137,16 +183,13 @@ class DeepspeedDecorator(ParallelDecorator):
     defaults = {"all_nodes_started_timeout": 90, "worker_polling_freq": 5}
     IS_PARALLEL = True
 
-    # Is this an anti-pattern?
-    # Could not find a better way without modifying the base @kubernetes + @parallel implementation
-    # based on MPI-like decorators that need passwordless ssh and to be running sshd as daemon.
     requires_passwordless_ssh = True
 
-    def _setup_current(self, hosts, n_slots_per_host, is_gpu):
+    def _setup_current(self, hosts, n_slots_per_host, is_gpu, flow):
         from metaflow import current
 
         current._update_env(
-            {"deepspeed": DeepspeedExecutor(hosts, n_slots_per_host, is_gpu)}
+            {"deepspeed": DeepspeedExecutor(hosts, n_slots_per_host, is_gpu, flow, self.attributes['worker_polling_freq'])}
         )
 
     def step_init(self, flow, graph, step, decos, environment, flow_datastore, logger):
@@ -187,69 +230,42 @@ class DeepspeedDecorator(ParallelDecorator):
     def task_decorate(
         self, step_func, flow, graph, retry_count, max_user_code_retries, ubf_context
     ):
-        # TODO: Investigate better patterns for submitting step_func code on control node and looping the workers.
-        # The pattern in this function works for running @ray_parallel, @mpi, @deepspeed, etc.
-        # Seems there should be a better, more elegant way to not always run the same exact code in the @parallel context.
-        # https://github.com/Netflix/metaflow/blob/d01ae37c03363be0289fbe02d10d26cf4fb3bc1b/metaflow/task.py#L571
-
-        from metaflow import current, S3
-
-        if not os.environ.get("METAFLOW_RUNTIME_ENVIRONMENT", "local") == "local":
-            s3 = S3(run=flow)
-
-        def _worker_heartbeat(
-            polling_freq=self.attributes["worker_polling_freq"],
-            var=DEEPSPEED_JOB_COMPLETE_VAR,
-        ):
-            control_done = False
-            while not control_done:
-                time.sleep(polling_freq)
-                try:
-                    control_done = json.loads(s3.get(CONTROL_TASK_DONE_PATH).blob)[var]
-                except metaflow.plugins.datatools.s3.s3.MetaflowS3NotFound:
-                    control_done = False
-                    continue
-
-        def _control_wrapper(step_func, flow, var=DEEPSPEED_JOB_COMPLETE_VAR):
+        def _step_func_with_setup():
+            self.setup_distributed_env(flow, ubf_context)
             step_func()
-            s3.put(CONTROL_TASK_DONE_PATH, json.dumps({var: True}))
 
-        def _empty_worker_task():
-            pass
+        if (
+            ubf_context == UBF_CONTROL
+            and os.environ.get("METAFLOW_RUNTIME_ENVIRONMENT", "local") == "local"
+        ):
+            from functools import partial
 
-        if os.environ.get("METAFLOW_RUNTIME_ENVIRONMENT", "local") == "local":
-            if ubf_context == UBF_CONTROL:
-                env_to_use = getattr(self.environment, "base_env", self.environment)
-                self._setup_current(
-                    hosts=["127.0.0.1"], n_slots_per_host=1, is_gpu=False
-                )
-                return partial(
-                    _local_multinode_control_task_step_func,
-                    flow,
-                    env_to_use,
-                    step_func,
-                    retry_count,
-                )
-            return partial(_empty_worker_task)
-        else:
-            hosts = self.setup_distributed_env(flow, ubf_context, n_slots=self.n_slots)
-            self._setup_current(
-                hosts=hosts, n_slots_per_host=self.n_slots, is_gpu=self.is_gpu
+            env_to_use = getattr(self.environment, "base_env", self.environment)
+
+            return partial(
+                _local_multinode_control_task_step_func,
+                flow,
+                env_to_use,
+                _step_func_with_setup,
+                retry_count,
             )
-            if ubf_context == UBF_CONTROL:
-                return partial(_control_wrapper, step_func=step_func, flow=flow)
-            return partial(_worker_heartbeat)
+        else:
+            return _step_func_with_setup
 
-    def setup_distributed_env(self, flow, ubf_context, n_slots=1):
+    def setup_distributed_env(self, flow, ubf_context):
         "Return a list of strings of hostnames of nodes to use for MPI"
-        return setup_mpi_env(
+        hosts = setup_mpi_env(
             flow,
             ubf_context,
             self.attributes["all_nodes_started_timeout"],
             self.attributes["worker_polling_freq"],
-            n_slots,
+            self.n_slots,
             self.is_k8s,
         )
+        self._setup_current(
+            hosts=hosts, n_slots_per_host=self.n_slots, is_gpu=self.is_gpu, flow=flow
+        )
+        return hosts
 
 
 def setup_mpi_env(
@@ -263,7 +279,7 @@ def setup_mpi_env(
 
     s3 = S3(run=run)
 
-    # gather variables
+    # gather variables - TODO: use current
     if is_k8s:
         world_size = int(os.environ["WORLD_SIZE"])
         if ubf_context == UBF_CONTROL:
@@ -273,12 +289,6 @@ def setup_mpi_env(
     else:  # is_batch
         world_size = int(os.environ["AWS_BATCH_JOB_NUM_NODES"])
         node_index = int(os.environ["AWS_BATCH_JOB_NODE_INDEX"])
-
-        # TODO: DELETE THIS
-        # set vars for deepspeed
-        # https://github.com/microsoft/DeepSpeed/blob/a855405e0b85fdc8346ff5fc0ab4085f18d95a9a/deepspeed/comm/comm.py#L150
-        # os.environ['WORLD_SIZE'] = str(world_size)
-        # os.environ['RANK'] = str(node_index)
 
     if ubf_context == UBF_CONTROL:
         key_push_path = "%s/control" % (MPI_PUBLIC_KEY_PATH)
@@ -375,3 +385,11 @@ def setup_mpi_env(
 
     s3.close()
     return hosts
+
+
+class DeepspeedException(MetaflowException):
+    headline = ""
+
+    def __init__(self, cmd):
+        msg = "The Deepspeed command \n\n{}\n\nfailed to complete.".format(" ".join(cmd))
+        super(DeepspeedException, self).__init__(msg)

@@ -8,7 +8,7 @@ MEMORY = "24000"
 N_CPU = 8
 
 
-class CoreweaveHelloDeepspeed(FlowSpec):
+class HelloDeepspeed(FlowSpec):
     @step
     def start(self):
         self.next(self.train, num_parallel=N_NODES)
@@ -31,4 +31,4 @@ class CoreweaveHelloDeepspeed(FlowSpec):
 
 
 if __name__ == "__main__":
-    CoreweaveHelloDeepspeed()
+    HelloDeepspeed()
