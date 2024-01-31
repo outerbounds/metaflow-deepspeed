@@ -106,17 +106,17 @@ class DeepspeedExecutor:
         entrypoint=None,
         entrypoint_args=[],
         deepspeed_config=None,
-        push_model_to_s3=False,
+        push_results_dir_to_s3=False,
         local_output_dir=None,
         s3_output_dir=None,
     ):
         from metaflow import current, S3
         node_index = current.parallel.node_index
-        if push_model_to_s3:
+        if push_results_dir_to_s3:
             if local_output_dir is None:
-                raise MetaflowException("current.deepspeed.run must specify local_output_dir if push_model_to_s3 is True")
+                raise MetaflowException("current.deepspeed.run must specify local_output_dir if push_results_dir_to_s3 is True")
             elif s3_output_dir is None:
-                s3_output_dir = os.path.relpath(local_output_dir, os.cwd())
+                s3_output_dir = os.path.relpath(local_output_dir, os.getcwd())
         with S3(run=self.flow) as s3:
             if node_index == 0: # control node
                 self._exec_cmd(deepspeed_args, entrypoint, entrypoint_args, deepspeed_config)
@@ -130,7 +130,7 @@ class DeepspeedExecutor:
                     except metaflow.plugins.datatools.s3.s3.MetaflowS3NotFound:
                         control_done = False
                         continue
-            if push_model_to_s3:
+            if push_results_dir_to_s3:
                 if not os.path.exists(local_output_dir):
                     print(f"Deepspeed process completed, and local_output_dir `{local_output_dir}` does not exist, skipping push to S3.")
                     return
@@ -149,9 +149,13 @@ class DeepspeedExecutor:
                                 os.path.join(path, fname)
                             )
                         )
-                print(f"Pushing model to S3 from node {node_index}...")
+                print(f"Pushing outputs in {local_output_dir} from node {node_index} to S3...")
                 path_result = s3.put_files(filepath_tuples)
-                print(f"Completed pushing {local_output_dir} to S3 at `{path_result[0][1].split(f'/{s3_output_dir}')[0]}`.")
+                s3_output_dir_full = f"{path_result[0][1].split(f'/{s3_output_dir}')[0]}/{s3_output_dir}"
+                print(f"Push completed. Results available at {s3_output_dir_full}.")
+                print(f"\n\nTo access the S3 results, instantiate Metaflow's S3 client with: with S3(run=Run('{current.flow_name}/{current.run_id}')) as s3: ...")
+                print(f"\nTo view metadata from this node use: s3.list_paths(['{s3_output_dir}/{node_index}'])")
+                print(f"\nTo recurisvely download everything in {s3_output_dir_full} use: s3.get_recursive(keys=['{s3_output_dir}'])\n\n")
             
 
     def _scan_cmd(self, host):
