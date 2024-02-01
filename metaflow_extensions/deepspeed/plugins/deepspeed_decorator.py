@@ -20,7 +20,7 @@ DEEPSPEED_JOB_COMPLETE_VAR = "mpi_job_status"
 PUBLIC_KEY_RECEIVED_VAR = "public_key_received"
 CONTROL_TASK_DONE_PATH = "control"
 MPI_PUBLIC_KEY_PATH = "public_keys"
-
+DEEPSPEED_ENV_FILE = ".deepspeed_env" # https://github.com/microsoft/DeepSpeed/blob/24f20ef0a105d32f6085fe0d3b1c2f9324a6262c/docs/_tutorials/getting-started.md?plain=1#L230-L254
 
 class DeepspeedExecutor:
     def __init__(self, hosts, n_slots_per_host=1, is_gpu=False, flow=None, worker_polling_freq=10) -> None:
@@ -75,14 +75,16 @@ class DeepspeedExecutor:
         cmd.extend(entrypoint_args)
 
         print(" ".join(cmd))
-        # TODO: Remove this print. Should log with MF?
-        # It is nice for debugging on workstation to have cmd in logs.
-        # Could attach to flow.
-
         
+        # write env_var=value to file
         env = os.environ.copy()
+        with open(DEEPSPEED_ENV_FILE, "w") as f:
+            for k, v in env.items():
+                f.write(f"{k}={v}\n")
+
+        # run the command
         with subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         ) as process:
             while process.poll() is None:
                 stdout = process.stdout.read1()
