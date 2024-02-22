@@ -7,7 +7,7 @@ MEMORY = "16000"
 N_CPU = 2
 
 
-class MetaflowDeepspeedS3ClientExample(FlowSpec):
+class MetaflowDeepspeedHFCallbackExample(FlowSpec):
 
     checkpoint_dir = "training_outputs"
 
@@ -56,4 +56,4 @@ class MetaflowDeepspeedS3ClientExample(FlowSpec):
 
 
 if __name__ == "__main__":
-    MetaflowDeepspeedS3ClientExample()
+    MetaflowDeepspeedHFCallbackExample()
