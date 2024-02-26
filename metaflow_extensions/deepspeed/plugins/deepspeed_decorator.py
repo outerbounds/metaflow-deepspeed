@@ -15,7 +15,9 @@ import json
 import time
 import sys
 import os
-import io
+from io import BytesIO
+from collections import namedtuple
+
 
 HOSTFILE_IP_KEY = "hostfile_ips"
 HOSTFILE = "hostfile.txt"
@@ -24,6 +26,7 @@ PUBLIC_KEY_RECEIVED_VAR = "public_key_received"
 CONTROL_TASK_DONE_PATH = "control"
 MPI_PUBLIC_KEY_PATH = "public_keys"
 DEEPSPEED_ENV_FILE = ".deepspeed_env"  # https://github.com/microsoft/DeepSpeed/blob/24f20ef0a105d32f6085fe0d3b1c2f9324a6262c/docs/_tutorials/getting-started.md?plain=1#L230-L254
+DEEPSPEED_SUFFIX = "deepspeed_datastore"
 
 
 class DeepspeedExecutor:
@@ -44,28 +47,30 @@ class DeepspeedExecutor:
         is_gpu: bool = False,
         flow=None,
         worker_polling_freq: int = 10,
+        flow_datastore=None,
     ) -> None:
         self.is_gpu = is_gpu
         self.n_slots_per_host = n_slots_per_host
         self.hosts = [
             h for h in hosts if h != socket.gethostbyname(socket.gethostname())
-        ] + ["127.0.0.1"]
+        ] + [
+            "127.0.0.1"
+        ]  # control node can use localhost
         self._scan_all_hosts()
         self.flow = flow
         self.worker_polling_freq = worker_polling_freq
+        self._flow_datastore = flow_datastore
 
     def _exec_cmd(
         self,
         deepspeed_args: Union[List[str], Dict[str, str]] = [],
         entrypoint: str = None,
         entrypoint_args: Union[List[str], Dict[str, str]] = [],
-        # deepspeed_config = None,
     ):
         """
         deepspeed_args: Dict[str] - arguments to pass to `exe`
         entrypoint: str - Python script for the Deepspeed launcher to run, such as a PyTorch or Huggingface training routine.
         entrypoint_args: Dict[str] - arguments to pass after `entrypoint`
-        deepspeed_config: ... TODO
         """
 
         # Container to build up the command to be run in a subprocess.
@@ -109,7 +114,6 @@ class DeepspeedExecutor:
             for k, v in os.environ.items():
                 if k == "METAFLOW_INIT_SCRIPT":
                     continue  # Don't pass these to deepspeed. Because of how deepspeed reads env vars and sets them in runner commands.
-                    # TODO: investigate PR to deepspeed to change how it uses .deepspeed_env to set env vars on workers.
                 else:
                     json_string = json.dumps(v)
                     f.write(f"{k}={json_string}\n")
@@ -128,7 +132,7 @@ class DeepspeedExecutor:
                     text = ""
                 print(
                     text, end="", flush=True
-                )  # TODO: explore other mechanisms to flush buffer correctly, especially in progress bar case.
+                )  # TODO: other mechanism to flush buffer, especially in progress bar case.
 
             if process.returncode != 0:
                 raise DeepspeedException(cmd)
@@ -143,10 +147,18 @@ class DeepspeedExecutor:
         s3_output_dir: str = None,
         s3_root: str = None,
     ) -> str:
-        from metaflow import current, S3
+        from metaflow import current
 
         node_index = current.parallel.node_index  # assumes parallel
-        if push_results_dir_to_s3:
+        datastore = DeepspeedDatastore(
+            flow_datastore=self._flow_datastore, pathspec=current.pathspec
+        )
+
+        if push_results_dir_to_s3 and datastore._backend.TYPE != "s3":
+            raise MetaflowException(
+                "current.deepspeed.run must use S3 as a datastore if push_results_dir_to_s3 is True"
+            )
+        elif push_results_dir_to_s3:
             # TODO: Annoying place for this check. Consider moving the S3 push args into the decorator itself, so can be checked at flow init instead.
             if local_output_dir is None:
                 raise MetaflowException(
@@ -158,15 +170,10 @@ class DeepspeedExecutor:
                 else:
                     s3_output_dir = local_output_dir  # os.path.relpath(local_output_dir, os.getcwd())
 
-        if s3_root is not None:
-            s3 = S3(s3root=s3_root)
-        else:
-            s3 = S3(run=self.flow)
-
         # Run the distributed job
         if node_index == 0:  # control node
             self._exec_cmd(deepspeed_args, entrypoint, entrypoint_args)
-            s3.put(
+            datastore.put(
                 CONTROL_TASK_DONE_PATH, json.dumps({DEEPSPEED_JOB_COMPLETE_VAR: True})
             )
         else:  # worker node
@@ -174,15 +181,19 @@ class DeepspeedExecutor:
             while not control_done:
                 time.sleep(self.worker_polling_freq)
                 try:
-                    control_done = json.loads(s3.get(CONTROL_TASK_DONE_PATH).blob)[
-                        DEEPSPEED_JOB_COMPLETE_VAR
-                    ]
-                except metaflow.plugins.datatools.s3.s3.MetaflowS3NotFound:
+                    control_done = json.loads(
+                        datastore.get(CONTROL_TASK_DONE_PATH).blob
+                    )[DEEPSPEED_JOB_COMPLETE_VAR]
+                except DeepspeedDatastoreNotFoundError:
                     control_done = False
                     continue
 
         # Push results to S3
-        if push_results_dir_to_s3:
+        if push_results_dir_to_s3 and datastore._backend.TYPE == "s3":
+            if s3_root is not None:
+                s3 = S3(s3root=s3_root)
+            else:
+                s3 = S3(run=self.flow)
             if not os.path.exists(local_output_dir):
                 print(
                     f"Deepspeed process completed, and local_output_dir `{local_output_dir}` does not exist, skipping push to S3."
@@ -227,8 +238,6 @@ class DeepspeedExecutor:
             s3.close()
             return s3_output_dir_full
 
-        s3.close()
-
     def _scan_cmd(self, host):
         return ["ssh-keyscan", "-H", host]
 
@@ -254,6 +263,92 @@ class DeepspeedExecutor:
                 raise e
 
 
+# mimic a subset of the behavior of the Metaflow S3Object
+DeepspeedDatastoreBlob = namedtuple("DeepspeedDatastoreBlob", "blob url text")
+DeepspeedListPathResult = namedtuple("DeepspeedListPathResult", "url")
+
+
+class DeepspeedDatastore(object):
+
+    """
+    This class is a wrapper around the basic Metaflow cloud datastore functionality.
+    It is used to interact with each cloud datastore provider from within the DeepspeedExecutor and DeepspeedDecorator class.
+    For now, local storage is not supported.
+    Methods provided follow the naming convention of Metaflow's S3 client: put, get, and list_paths.
+    """
+
+    def __init__(self, flow_datastore, pathspec=None):
+        self._backend = flow_datastore._storage_impl
+        self._flow_name = flow_datastore.flow_name
+        _, run_id, step_name, _ = pathspec.split("/")
+        self._run_id = run_id
+        self._step_name = step_name
+        self._pathspec = pathspec
+
+    @property
+    def get_storage_root(self):
+        """
+        Return the path to the root of the deepspeed datastore.
+        This method is where the unique deepspeed datastore root for each cloud provider is specified.
+
+        Note: S3Storage class uses the S3 client (other clouds do not have this), 
+            which prepends the storage root inside the self._backend calls this class uses.
+        """
+        if self._backend.TYPE == "s3":
+            from metaflow.metaflow_config import DATASTORE_SYSROOT_S3
+
+            return DEEPSPEED_SUFFIX
+        elif self._backend.TYPE == "azure":
+            from metaflow.metaflow_config import DATASTORE_SYSROOT_AZURE
+
+            return os.path.join(DATASTORE_SYSROOT_AZURE, DEEPSPEED_SUFFIX)
+        elif self._backend.TYPE == "gs":
+            from metaflow.metaflow_config import DATASTORE_SYSROOT_GS
+
+            return os.path.join(DATASTORE_SYSROOT_GS, DEEPSPEED_SUFFIX)
+        else:
+            raise NotImplementedError(
+                "Deepspeed datastore does not support backend %s" % (self._backend.TYPE)
+            )
+
+    def get_datastore_file_location(self, key):
+        return os.path.join(
+            self.get_storage_root, self._flow_name, self._run_id, self._step_name, key
+        )
+
+    def put(self, key: str, value: str):
+        "Put a single object into the datastore's `key` index."
+        self._backend.save_bytes(
+            [(self.get_datastore_file_location(key), BytesIO(value.encode("utf-8")))],
+            overwrite=True,
+        )
+
+    def get(self, key):
+        "Get a single object residing in the datastore's `key` index."
+        datastore_url = self.get_datastore_file_location(key)
+        with self._backend.load_bytes([datastore_url]) as get_results:
+            for key, path, meta in get_results:
+                if path is not None:
+                    with open(path, "rb") as f:
+                        blob_bytes = f.read()
+                        return DeepspeedDatastoreBlob(
+                            blob=blob_bytes,
+                            url=datastore_url,
+                            text=blob_bytes.decode("utf-8"),
+                        )
+                else:
+                    raise DeepspeedDatastoreNotFoundError(datastore_url)
+
+    def list_paths(self, keys):
+        "List all objects in the datastore's `keys` index."
+        keys = [self.get_datastore_file_location(key) for key in keys]
+        list_path_results = [
+            DeepspeedListPathResult(url=list_content_result.path)
+            for list_content_result in self._backend.list_content(keys)
+        ]
+        return list_path_results
+
+
 class DeepspeedDecorator(ParallelDecorator):
 
     name = "deepspeed"
@@ -275,6 +370,7 @@ class DeepspeedDecorator(ParallelDecorator):
                     is_gpu,
                     flow,
                     self.attributes["worker_polling_freq"],
+                    self.flow_datastore,
                 )
             }
         )
@@ -283,6 +379,9 @@ class DeepspeedDecorator(ParallelDecorator):
         from metaflow.plugins.kubernetes.kubernetes_decorator import KubernetesDecorator
         from metaflow.plugins.aws.batch.batch_decorator import BatchDecorator
         from metaflow.plugins.aws.aws_utils import compute_resource_attributes
+
+        self.environment = environment
+        self.flow_datastore = flow_datastore
 
         self.is_batch = False
         self.is_k8s = False
@@ -296,7 +395,6 @@ class DeepspeedDecorator(ParallelDecorator):
                 break
         else:
             self.local = True
-        self.environment = environment
 
         for deco in decos:
             if deco.name in ["resources", "kubernetes", "batch"]:
@@ -348,6 +446,7 @@ class DeepspeedDecorator(ParallelDecorator):
             self.attributes["worker_polling_freq"],
             self.n_slots,
             self.is_k8s,
+            self.flow_datastore,
         )
         self._setup_current(
             hosts=hosts, n_slots_per_host=self.n_slots, is_gpu=self.is_gpu, flow=flow
@@ -356,23 +455,31 @@ class DeepspeedDecorator(ParallelDecorator):
 
 
 def setup_mpi_env(
-    run, ubf_context, all_nodes_started_timeout, interval, n_slots, is_k8s
+    run,
+    ubf_context,
+    all_nodes_started_timeout,
+    interval,
+    n_slots,
+    is_k8s,
+    flow_datastore,
 ):
-    # TODO: Generalize setup to work on AWS Batch
     # NOTE: Where jobset for @kuberentes + @parallel can automate the sshd port opening,
     # AWS Batch will require security groups applied to the compute env for this.
 
-    from metaflow import current, S3
+    from metaflow import current
 
-    s3 = S3(run=run)
+    datastore = DeepspeedDatastore(
+        flow_datastore=flow_datastore, pathspec=current.pathspec
+    )
 
-    # gather variables - TODO: use current
+    # gather distributed universe variables
     if is_k8s:
         world_size = int(os.environ["WORLD_SIZE"])
         if ubf_context == UBF_CONTROL:
             node_index = 0
         else:
-            node_index = int(os.environ["RANK"]) + 1
+            # node_index = int(os.environ["RANK"]) + 1
+            node_index = int(os.environ["RANK"])
     else:  # is_batch
         world_size = int(os.environ["AWS_BATCH_JOB_NUM_NODES"])
         node_index = int(os.environ["AWS_BATCH_JOB_NODE_INDEX"])
@@ -383,7 +490,6 @@ def setup_mpi_env(
         key_push_path = "%s/worker/%s" % (MPI_PUBLIC_KEY_PATH, node_index)
 
     my_ip = socket.gethostbyname(socket.gethostname())
-
     ssh_dir = os.path.expanduser("~/.ssh")
     if not os.path.exists(ssh_dir):
         os.makedirs(ssh_dir)
@@ -399,40 +505,37 @@ def setup_mpi_env(
     assert result.returncode == 0, "Error generating host key"
     # Move public key to S3
     with open(os.path.join(ssh_dir, "id_rsa.pub"), "r") as f:
-        s3.put(key_push_path, f.read())
-
+        datastore.put(key_push_path, f.read())
     if ubf_context == UBF_CONTROL:
         # loop until all workers have pushed their public keys
         worker_keys_path = "%s/worker" % MPI_PUBLIC_KEY_PATH
         while True:
             try:
-                paths = s3.list_paths([worker_keys_path])
+                paths = datastore.list_paths([worker_keys_path])
                 if len(paths) == world_size - 1:  # all nodes minus control
                     break
                 time.sleep(interval)
-            except metaflow.plugins.datatools.s3.s3.MetaflowS3NotFound:
+            except DeepspeedDatastoreNotFoundError:
                 time.sleep(interval)
                 continue
-
         # append all public keys to authorized_keys file
         with open(os.path.join(ssh_dir, "authorized_keys"), "a") as g:
             for p in paths:
                 tail = p.url.split(MPI_PUBLIC_KEY_PATH)[-1][1:]
-                obj = s3.get(os.path.join(MPI_PUBLIC_KEY_PATH, tail))
+                obj = datastore.get(os.path.join(MPI_PUBLIC_KEY_PATH, tail))
                 g.write(obj.text)
             # add self to keys too
             with open(os.path.join(ssh_dir, "id_rsa.pub"), "r") as f:
                 g.write(f.read())
-
     else:
         control_key_path = "%s/control" % MPI_PUBLIC_KEY_PATH
         while True:
             try:
-                obj = s3.get(control_key_path)
+                obj = datastore.get(control_key_path)
                 with open(os.path.join(ssh_dir, "authorized_keys"), "a") as g:
                     g.write(obj.text)
                 break
-            except metaflow.plugins.datatools.s3.s3.MetaflowS3NotFound:
+            except DeepspeedDatastoreNotFoundError:
                 time.sleep(interval)
                 continue
     os.chmod(os.path.join(ssh_dir, "authorized_keys"), 0o600)
@@ -440,7 +543,7 @@ def setup_mpi_env(
     # enable passwordless ssh
     ssh_config_options = [
         "PubKeyAuthentication yes",
-        "RSAAuthentication yes",  # TODO: can this be removed?
+        "RSAAuthentication yes",
     ]
     with open("/etc/ssh/sshd_config", "a") as f:
         f.write("\n".join(ssh_config_options))
@@ -452,15 +555,18 @@ def setup_mpi_env(
     )
     assert result.returncode == 0, "Error restarting sshd"
 
-    # Share IPs to write the hosts file
-    s3.put("%s/%s" % (HOSTFILE_IP_KEY, node_index), my_ip)
+    # Share IPs for writing the hostfiles
+    datastore.put("%s/%s" % (HOSTFILE_IP_KEY, node_index), my_ip)
     while True:
-        s3_hostfile_entry_paths = s3.list_paths([HOSTFILE_IP_KEY])
-        if len(s3_hostfile_entry_paths) == world_size:
-            hosts = [
-                s3.get(os.path.join(*s3obj.url.split("/")[-2:])).blob.decode("utf-8")
-                for s3obj in s3_hostfile_entry_paths
-            ]
+        datastore_hostfile_entry_paths = datastore.list_paths([HOSTFILE_IP_KEY])
+        if len(datastore_hostfile_entry_paths) == world_size:
+            hosts = []
+            for datastore_obj in datastore_hostfile_entry_paths:
+                hosts.append(
+                    datastore.get(
+                        os.path.join(*datastore_obj.url.split("/")[-2:])
+                    ).blob.decode("utf-8")
+                )
             break
         time.sleep(5)
 
@@ -470,7 +576,6 @@ def setup_mpi_env(
                 h = "127.0.0.1"
             f.write("%s slots=%s\n" % (h, n_slots))
 
-    s3.close()
     return hosts
 
 
@@ -482,3 +587,13 @@ class DeepspeedException(MetaflowException):
             " ".join(cmd)
         )
         super(DeepspeedException, self).__init__(msg)
+
+
+class DeepspeedDatastoreNotFoundError(MetaflowException):
+    headline = "DeepSpeed Datastore Not Found"
+
+    def __init__(self, datastore_path_name):
+        msg = "The DeepSpeed datastore path {} was not found.".format(
+            datastore_path_name
+        )
+        super(DeepspeedDatastoreNotFoundError, self).__init__(msg)
