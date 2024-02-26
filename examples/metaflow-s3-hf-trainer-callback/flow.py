@@ -1,4 +1,4 @@
-from metaflow import FlowSpec, step, deepspeed, kubernetes, current, S3
+from metaflow import FlowSpec, step, deepspeed, kubernetes, current
 import json
 
 N_NODES = 2
