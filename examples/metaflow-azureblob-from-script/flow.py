@@ -1,13 +1,14 @@
-from metaflow import FlowSpec, step, deepspeed, kubernetes, current, S3
+from metaflow import FlowSpec, step, deepspeed, kubernetes, current
 import json
 
 N_NODES = 2
-IMAGE = "eddieob/deepspeed:6"
+# IMAGE = "public.ecr.aws/p7g1e3j4/deepspeed:6"
+IMAGE = "docker.io/eddieob/deepspeed:6"
 MEMORY = "16000"
 N_CPU = 2
 
 
-class MetaflowDeepspeedS3ClientExample(FlowSpec):
+class MetaflowDeepspeedAzureClientExample(FlowSpec):
 
     @step
     def start(self):
@@ -19,7 +20,7 @@ class MetaflowDeepspeedS3ClientExample(FlowSpec):
     def train(self):
         current.deepspeed.run(
             entrypoint="train.py",
-            entrypoint_args={"run_id": current.run_id, "flow_name": current.flow_name},
+            entrypoint_args={"run-pathspec": f"{current.flow_name}/{current.run_id}"},
         )
         self.next(self.join)
 
@@ -29,13 +30,11 @@ class MetaflowDeepspeedS3ClientExample(FlowSpec):
 
     @step
     def end(self):
-        # Download the results of the @deepspeed @kubernetes step from the S3 bucket in a separate task running locally.
-        with S3(run=self) as s3:
-            for obj in s3.get_recursive(
-                keys=[f"output_{i}.txt" for i in range(N_NODES * N_CPU)]
-            ):
-                print(obj.blob.decode("utf-8"))
+        from az_store import AzureBlob 
+        blob_store = AzureBlob(run_pathspec=f"{current.flow_name}/{current.run_id}")
+        for key_id in range(N_NODES * N_CPU):
+            print(f"output_{key_id}.txt: ", blob_store.get(f"output_{key_id}.txt").text)
 
 
 if __name__ == "__main__":
-    MetaflowDeepspeedS3ClientExample()
+    MetaflowDeepspeedAzureClientExample()
