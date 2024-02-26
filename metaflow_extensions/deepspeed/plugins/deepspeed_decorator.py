@@ -168,7 +168,7 @@ class DeepspeedExecutor:
                 if local_output_dir.startswith("/"):
                     s3_output_dir = local_output_dir[1:]
                 else:
-                    s3_output_dir = local_output_dir  # os.path.relpath(local_output_dir, os.getcwd())
+                    s3_output_dir = local_output_dir
 
         # Run the distributed job
         if node_index == 0:  # control node
@@ -339,8 +339,16 @@ class DeepspeedDatastore(object):
                 else:
                     raise DeepspeedDatastoreNotFoundError(datastore_url)
 
+    def get_many(self, keys):
+        return [self.get(key) for key in keys]
+
     def list_paths(self, keys):
         "List all objects in the datastore's `keys` index."
+        if self._backend.TYPE == "gs":
+            raise NotImplementedError(
+                """Deepspeed datastore does not support the list_paths API for Google Cloud storage. 
+                If you know the paths ahead of this call, use get_many with the keys you want to list instead."""
+            )
         keys = [self.get_datastore_file_location(key) for key in keys]
         list_path_results = [
             DeepspeedListPathResult(url=list_content_result.path)
@@ -511,8 +519,17 @@ def setup_mpi_env(
         worker_keys_path = "%s/worker" % MPI_PUBLIC_KEY_PATH
         while True:
             try:
-                paths = datastore.list_paths([worker_keys_path])
-                if len(paths) == world_size - 1:  # all nodes minus control
+                paths = []
+                num_workers_registered = 0
+                for i in range(1, world_size): # worker node indices start at 1
+                    path = os.path.join(worker_keys_path, str(i))
+                    try:
+                        datastore.get(path)
+                        num_workers_registered += 1
+                        paths.append(path)
+                    except DeepspeedDatastoreNotFoundError:
+                        pass
+                if num_workers_registered == world_size - 1:  # all nodes minus control
                     break
                 time.sleep(interval)
             except DeepspeedDatastoreNotFoundError:
@@ -521,8 +538,7 @@ def setup_mpi_env(
         # append all public keys to authorized_keys file
         with open(os.path.join(ssh_dir, "authorized_keys"), "a") as g:
             for p in paths:
-                tail = p.url.split(MPI_PUBLIC_KEY_PATH)[-1][1:]
-                obj = datastore.get(os.path.join(MPI_PUBLIC_KEY_PATH, tail))
+                obj = datastore.get(p)
                 g.write(obj.text)
             # add self to keys too
             with open(os.path.join(ssh_dir, "id_rsa.pub"), "r") as f:
@@ -558,14 +574,19 @@ def setup_mpi_env(
     # Share IPs for writing the hostfiles
     datastore.put("%s/%s" % (HOSTFILE_IP_KEY, node_index), my_ip)
     while True:
-        datastore_hostfile_entry_paths = datastore.list_paths([HOSTFILE_IP_KEY])
+        datastore_hostfile_entry_paths = []
+        for i in range(world_size):
+            try:
+                ip_object_store_key = "%s/%s" % (HOSTFILE_IP_KEY, i)
+                _ = datastore.get(ip_object_store_key)
+                datastore_hostfile_entry_paths.append(ip_object_store_key)
+            except DeepspeedDatastoreNotFoundError:
+                pass
         if len(datastore_hostfile_entry_paths) == world_size:
             hosts = []
-            for datastore_obj in datastore_hostfile_entry_paths:
+            for datastore_path in datastore_hostfile_entry_paths:
                 hosts.append(
-                    datastore.get(
-                        os.path.join(*datastore_obj.url.split("/")[-2:])
-                    ).blob.decode("utf-8")
+                    datastore.get(datastore_path).blob.decode("utf-8")
                 )
             break
         time.sleep(5)
