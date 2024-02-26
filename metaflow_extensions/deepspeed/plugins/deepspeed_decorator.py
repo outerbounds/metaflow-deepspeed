@@ -295,16 +295,12 @@ class DeepspeedDatastore(object):
             which prepends the storage root inside the self._backend calls this class uses.
         """
         if self._backend.TYPE == "s3":
-            from metaflow.metaflow_config import DATASTORE_SYSROOT_S3
-
             return DEEPSPEED_SUFFIX
         elif self._backend.TYPE == "azure":
             from metaflow.metaflow_config import DATASTORE_SYSROOT_AZURE
-
             return os.path.join(DATASTORE_SYSROOT_AZURE, DEEPSPEED_SUFFIX)
         elif self._backend.TYPE == "gs":
             from metaflow.metaflow_config import DATASTORE_SYSROOT_GS
-
             return os.path.join(DATASTORE_SYSROOT_GS, DEEPSPEED_SUFFIX)
         else:
             raise NotImplementedError(
