@@ -21,7 +21,7 @@ class MetaflowDeepspeedHFCallbackExample(FlowSpec):
     def train(self):
 
         # Run the deepspeed task.
-        # In order to use Metaflow S3 client, we pass run-id and flow-name to the entrypoint.
+        # In order to use the Azure Blob client, we pass run-id and flow-name to the entrypoint.
         # This is necessary because deepspeed launches the entrypoint as a subprocess, 
         # so the script does not have access to the Metaflow current object to pull these values.
         current.deepspeed.run(
@@ -42,7 +42,7 @@ class MetaflowDeepspeedHFCallbackExample(FlowSpec):
     @step
     def end(self):
 
-        # Download the results from the S3 bucket.
+        # Download the results from the Azure Blob storage bucket.
         from train import MetaflowAzureBlobSync
         blob_store = MetaflowAzureBlobSync(run_pathspec=f"{current.flow_name}/{current.run_id}")
         blob_store.download(all_nodes=True)
