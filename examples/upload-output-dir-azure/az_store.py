@@ -137,7 +137,7 @@ class AzureBlob(object):
             )
         return results
 
-    def get_files(self, key_paths: List[Tuple[str, str]], as_binary=False):
+    def get_files(self, key_paths: List[Tuple[str, str]], as_binary=True):
         for key, path in key_paths:
 
             if not os.path.exists(os.path.dirname(path)):

@@ -46,8 +46,9 @@ class MetaflowDeepspeedHFCallbackExample(FlowSpec):
         from train import MetaflowAzureBlobSync
         blob_store = MetaflowAzureBlobSync(run_pathspec=f"{current.flow_name}/{current.run_id}")
         blob_store.download(all_nodes=True)
+        # You could use the above to download a pretrained checkpoint in the `train` step, instead of training from scratch.
 
-        # Print the results.
+        # Print the results, showing that the files were downloaded from the Azure Blob storage bucket.
         import os
         for root, dirs, files in os.walk(os.getcwd()):
             for file in files:

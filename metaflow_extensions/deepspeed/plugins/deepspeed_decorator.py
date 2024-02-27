@@ -235,6 +235,7 @@ class DeepspeedExecutor:
 
         elif push_results_dir_to_cloud and datastore._backend.TYPE == "azure":
             
+            # don't use datastore here, use the AzureBlob class so results go into user storage space
             from az_store import AzureBlob
             blob_store = AzureBlob(run_pathspec=f"{current.flow_name}/{current.run_id}")
             
@@ -265,8 +266,17 @@ class DeepspeedExecutor:
             print(
                 f"Pushing outputs in {local_output_dir} from node {node_index} to Azure Blob Storage..."
             )
-            results = blob_store.put_files(filepath_tuples)
-            print(f"Push completed. Results available at {results}.")
+            blob_key_results = blob_store.put_files(filepath_tuples)
+            print(f"Push completed to these keys in the datastore: {blob_key_results}.")
+            print(
+                f"\nTo access the results, use the experimental Azure Blob client using:\n\tblob_store = AzureBlob(run_pathspec='{current.flow_name}/{current.run_id}')"
+            )
+            print(
+                f"\nTo view metadata from this node use:\n\tblob_store.list_paths(['{cloud_output_dir}/{node_index}'])"
+            )
+            print(
+                f"\nTo recurisvely download everything in the blob store for this run use:\n\tblob_store.get_files(key_paths=[(p.key, p.key) for p in blob_store.list_paths(['{cloud_output_dir}'])])\n\n"
+            )
 
     def _scan_cmd(self, host):
         return ["ssh-keyscan", "-H", host]
@@ -356,12 +366,13 @@ class DeepspeedDatastore(object):
             )
 
     def put_files(self, key_paths: List[Tuple[str, str]], overwrite=False):
+        keyless_root = self.get_datastore_key_location()
         results = []
         for key, path in key_paths:
             with open(path, "rb") as f:
                 self.put(key, f.read(), overwrite=overwrite)
             results.append(
-                self.get_datastore_file_location(key)
+                self.get_datastore_key_location(key)[len(keyless_root):].strip("/")
             )
         return results
 
