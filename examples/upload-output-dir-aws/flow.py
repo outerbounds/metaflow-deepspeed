@@ -44,9 +44,9 @@ class MetaflowDeepspeedDirectoryUpload(FlowSpec):
                 "output-dir": self.local_output_dir,
                 "contents": choice(self.messages),
             },
-            # local_output_dir=self.local_output_dir,
-            # s3_output_dir=self.s3_output_dir,  # If you don't specify this, it will be metaflow_temp, or whatever you change tmpfs path to.
-            # push_results_dir_to_s3=True,
+            local_output_dir=self.local_output_dir,
+            s3_output_dir=self.s3_output_dir,  # If you don't specify this, it will be metaflow_temp, or whatever you change tmpfs path to.
+            push_results_dir_to_s3=True,
         )
 
         self.next(self.join)
@@ -63,13 +63,12 @@ class MetaflowDeepspeedDirectoryUpload(FlowSpec):
         This is a separate task running locally.
         Follow the instructions that the current.deepspeed.run prints to stdout when push_results_dir_to_s3=True.
         """
-        pass
-        # with S3(run=self) as s3:  # result versioned by this flow
-        #     objs = s3.get_recursive(keys=[self.s3_output_dir])
-        #     for obj in objs:
-        #         with open(obj.path, "r") as f:
-        #             result = f.read().strip()
-        #             print(result)
+        with S3(run=self) as s3:  # result versioned by this flow
+            objs = s3.get_recursive(keys=[self.s3_output_dir])
+            for obj in objs:
+                with open(obj.path, "r") as f:
+                    result = f.read().strip()
+                    print(result)
 
 
 if __name__ == "__main__":

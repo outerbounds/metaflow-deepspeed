@@ -128,12 +128,21 @@ class AzureBlob(object):
         return results
 
     def put_files(self, key_paths: List[Tuple[str, str]], overwrite=False):
+        results = []
         for key, path in key_paths:
             with open(path, "rb") as f:
                 self.put(key, f.read(), overwrite=overwrite)
+            results.append(
+                self.get_datastore_key_location(key)
+            )
+        return results
 
     def get_files(self, key_paths: List[Tuple[str, str]], as_binary=False):
         for key, path in key_paths:
+
+            if not os.path.exists(os.path.dirname(path)):
+                os.makedirs(os.path.dirname(path))
+                
             if as_binary:
                 with open(path, "wb") as f:
                     f.write(self.get(key).blob)

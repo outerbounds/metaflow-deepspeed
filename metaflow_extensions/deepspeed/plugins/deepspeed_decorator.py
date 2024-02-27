@@ -8,7 +8,7 @@ import metaflow
 
 # from metaflow import Run as MetaflowRun
 from functools import partial
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Tuple
 import subprocess
 import socket
 import json
@@ -142,11 +142,10 @@ class DeepspeedExecutor:
         deepspeed_args: Union[List[str], Dict[str, str]] = [],
         entrypoint: str = None,
         entrypoint_args: Union[List[str], Dict[str, str]] = [],
-        push_results_dir_to_s3: bool = False,
+        push_results_dir_to_cloud: bool = False,
         local_output_dir: str = None,
-        s3_output_dir: str = None,
-        s3_root: str = None,
-    ) -> str:
+        cloud_output_dir: str = None
+    ) -> None:
         from metaflow import current
 
         node_index = current.parallel.node_index  # assumes parallel
@@ -154,21 +153,21 @@ class DeepspeedExecutor:
             flow_datastore=self._flow_datastore, pathspec=current.pathspec
         )
 
-        if push_results_dir_to_s3 and datastore._backend.TYPE != "s3":
+        if push_results_dir_to_cloud and (datastore._backend.TYPE != "s3" and datastore._backend.TYPE != "azure"):
             raise MetaflowException(
-                "current.deepspeed.run must use S3 as a datastore if push_results_dir_to_s3 is True"
+                "current.deepspeed.run must use S3 or Azure Blob Storage as a datastore if push_results_dir_to_cloud is True. You are using %s." % datastore._backend.TYPE
             )
-        elif push_results_dir_to_s3:
+        elif push_results_dir_to_cloud:
             # TODO: Annoying place for this check. Consider moving the S3 push args into the decorator itself, so can be checked at flow init instead.
             if local_output_dir is None:
                 raise MetaflowException(
                     "current.deepspeed.run must specify local_output_dir if push_results_dir_to_s3 is True"
                 )
-            elif s3_output_dir is None:
+            elif cloud_output_dir is None:
                 if local_output_dir.startswith("/"):
-                    s3_output_dir = local_output_dir[1:]
+                    cloud_output_dir = local_output_dir[1:]
                 else:
-                    s3_output_dir = local_output_dir
+                    cloud_output_dir = local_output_dir
 
         # Run the distributed job
         if node_index == 0:  # control node
@@ -189,11 +188,8 @@ class DeepspeedExecutor:
                     continue
 
         # Push results to S3
-        if push_results_dir_to_s3 and datastore._backend.TYPE == "s3":
-            if s3_root is not None:
-                s3 = S3(s3root=s3_root)
-            else:
-                s3 = S3(run=self.flow)
+        if push_results_dir_to_cloud and datastore._backend.TYPE == "s3":
+            s3 = S3(run=self.flow)
             if not os.path.exists(local_output_dir):
                 print(
                     f"Deepspeed process completed, and local_output_dir `{local_output_dir}` does not exist, skipping push to S3."
@@ -214,7 +210,7 @@ class DeepspeedExecutor:
                 for fname in files:
                     filepath_tuples.append(
                         (
-                            f"{s3_output_dir}/{str(node_index)}/{os.path.relpath(os.path.join(path, fname), local_output_dir)}",
+                            f"{cloud_output_dir}/{str(node_index)}/{os.path.relpath(os.path.join(path, fname), local_output_dir)}",
                             os.path.join(path, fname),
                         )
                     )
@@ -236,7 +232,41 @@ class DeepspeedExecutor:
                 f"\nTo recurisvely download everything in {s3_output_dir_full} use:\n\ts3.get_recursive(keys=['{s3_output_dir}'])\n\n"
             )
             s3.close()
-            return s3_output_dir_full
+
+        elif push_results_dir_to_cloud and datastore._backend.TYPE == "azure":
+            
+            from az_store import AzureBlob
+            blob_store = AzureBlob(run_pathspec=f"{current.flow_name}/{current.run_id}")
+            
+            if not os.path.exists(local_output_dir):
+                print(
+                    f"Deepspeed process completed, and local_output_dir `{local_output_dir}` does not exist, skipping push to Azure Blob Storage."
+                )
+                return
+            if not os.path.isdir(local_output_dir):
+                print(
+                    f"Deepspeed process completed, and local_output_dir `{local_output_dir}` is not a directory, skipping push to Azure Blob Storage."
+                )
+                return
+            if len(os.listdir(local_output_dir)) == 0:
+                print(
+                    f"Deepspeed process completed, and local_output_dir `{local_output_dir}` is empty, skipping push to Azure Blob Storage."
+                )
+                return
+            filepath_tuples = []
+            for path, subdirs, files in os.walk(local_output_dir):
+                for fname in files:
+                    filepath_tuples.append(
+                        (
+                            f"{cloud_output_dir}/{str(node_index)}/{os.path.relpath(os.path.join(path, fname), local_output_dir)}",
+                            os.path.join(path, fname),
+                        )
+                    )
+            print(
+                f"Pushing outputs in {local_output_dir} from node {node_index} to Azure Blob Storage..."
+            )
+            results = blob_store.put_files(filepath_tuples)
+            print(f"Push completed. Results available at {results}.")
 
     def _scan_cmd(self, host):
         return ["ssh-keyscan", "-H", host]
@@ -312,12 +342,28 @@ class DeepspeedDatastore(object):
             self.get_storage_root, self._flow_name, self._run_id, self._step_name, key
         )
 
-    def put(self, key: str, value: str):
+    def put(self, key: str, obj: Union[str, bytes], overwrite: bool = False):
         "Put a single object into the datastore's `key` index."
-        self._backend.save_bytes(
-            [(self.get_datastore_file_location(key), BytesIO(value.encode("utf-8")))],
-            overwrite=True,
-        )
+        if isinstance(obj, bytes):
+            self._backend.save_bytes(
+                [(self.get_datastore_file_location(key), BytesIO(obj))],
+                overwrite=overwrite,
+            )
+        else:
+            self._backend.save_bytes(
+                [(self.get_datastore_file_location(key), BytesIO(obj.encode("utf-8")))],
+                overwrite=overwrite,
+            )
+
+    def put_files(self, key_paths: List[Tuple[str, str]], overwrite=False):
+        results = []
+        for key, path in key_paths:
+            with open(path, "rb") as f:
+                self.put(key, f.read(), overwrite=overwrite)
+            results.append(
+                self.get_datastore_file_location(key)
+            )
+        return results
 
     def get(self, key):
         "Get a single object residing in the datastore's `key` index."
