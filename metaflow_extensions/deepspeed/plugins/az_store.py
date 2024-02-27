@@ -149,8 +149,3 @@ class AzureBlob(object):
             else:
                 with open(path, "w") as f:
                     f.write(self.get(key).text)
-
-    def get_recursive(self, keys: List[str]):
-        for result in self.list_paths(keys):
-            if result.key:
-                yield self.get(result.key)
