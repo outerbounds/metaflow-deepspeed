@@ -38,7 +38,7 @@ class MetaflowAzureBlobSync(TrainerCallback):
 
     def on_epoch_end(self, args, state, control, **kwargs):
         """
-        Push the training outputs to Metaflow S3 on epoch end.
+        Push the training outputs to Metaflow Azure Blob Storage on epoch end.
         Find other hooks at https://huggingface.co/docs/transformers/v4.38.1/en/main_classes/callback#transformers.TrainerCallback
 
         NOTE: As models get larger, be careful the amount of checkpoints you push to Azure Blob. You may, for example, only want to push the best checkpoint.
@@ -60,7 +60,7 @@ class MetaflowAzureBlobSync(TrainerCallback):
         return tar_bytes
 
     def _get_blob_store(self):
-        "Return an S3 object based on the run or s3_root."
+        "Return an Azure Blob object based on the run."
         return AzureBlob(run_pathspec=self.run_pathspec)
 
     def _upload_to_azure_blob(self, tar_bytes):
