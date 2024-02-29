@@ -110,19 +110,23 @@ class DeepspeedExecutor:
 
         # Write env_var=value to file.
         # Deepspeed automatically looks for this file to prepend the variables to its launcher command.
-        with open(DEEPSPEED_ENV_FILE, "w") as f:
-            for k, v in os.environ.items():
-                if k == "METAFLOW_INIT_SCRIPT":
-                    continue  # Don't pass these to deepspeed. Because of how deepspeed reads env vars and sets them in runner commands.
-                else:
-                    json_string = json.dumps(v)
-                    f.write(f"{k}={json_string}\n")
+        env = os.environ.copy()
+        if len(self.hosts) > 1:
+            with open(DEEPSPEED_ENV_FILE, "w") as f:
+                for k, v in env.items():
+                    if k == "METAFLOW_INIT_SCRIPT":
+                        continue  # Don't pass these to deepspeed. Because of how deepspeed reads env vars and sets them in runner commands.
+                    else:
+                        json_string = json.dumps(v)
+                        f.write(f"{k}={json_string}\n")
+
+        elif len(self.hosts) == 1:  # if multi-node, deepspeed does this itself.
+            curr_path = os.path.abspath(".")
+            env["PYTHONPATH"] = curr_path
 
         # Launch the Deepspeed run.
         with subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,  # pipe to Metaflow stdout. TODO: How to handle progress bar buffering like TQDM.
-            stderr=subprocess.STDOUT,
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env
         ) as process:
             while process.poll() is None:
                 stdout = process.stdout.read1()
@@ -144,7 +148,7 @@ class DeepspeedExecutor:
         entrypoint_args: Union[List[str], Dict[str, str]] = [],
         push_results_dir_to_cloud: bool = False,
         local_output_dir: str = None,
-        cloud_output_dir: str = None
+        cloud_output_dir: str = None,
     ) -> None:
         from metaflow import current
 
@@ -153,9 +157,12 @@ class DeepspeedExecutor:
             flow_datastore=self._flow_datastore, pathspec=current.pathspec
         )
 
-        if push_results_dir_to_cloud and (datastore._backend.TYPE != "s3" and datastore._backend.TYPE != "azure"):
+        if push_results_dir_to_cloud and (
+            datastore._backend.TYPE != "s3" and datastore._backend.TYPE != "azure"
+        ):
             raise MetaflowException(
-                "current.deepspeed.run must use S3 or Azure Blob Storage as a datastore if push_results_dir_to_cloud is True. You are using %s." % datastore._backend.TYPE
+                "current.deepspeed.run must use S3 or Azure Blob Storage as a datastore if push_results_dir_to_cloud is True. You are using %s."
+                % datastore._backend.TYPE
             )
         elif push_results_dir_to_cloud:
             # TODO: Annoying place for this check. Consider moving the S3 push args into the decorator itself, so can be checked at flow init instead.
@@ -234,11 +241,12 @@ class DeepspeedExecutor:
             s3.close()
 
         elif push_results_dir_to_cloud and datastore._backend.TYPE == "azure":
-            
+
             # don't use datastore here, use the AzureBlob class so results go into user storage space
             from az_store import AzureBlob
+
             blob_store = AzureBlob(run_pathspec=f"{current.flow_name}/{current.run_id}")
-            
+
             if not os.path.exists(local_output_dir):
                 print(
                     f"Deepspeed process completed, and local_output_dir `{local_output_dir}` does not exist, skipping push to Azure Blob Storage."
@@ -331,16 +339,18 @@ class DeepspeedDatastore(object):
         Return the path to the root of the deepspeed datastore.
         This method is where the unique deepspeed datastore root for each cloud provider is specified.
 
-        Note: S3Storage class uses the S3 client (other clouds do not have this), 
+        Note: S3Storage class uses the S3 client (other clouds do not have this),
             which prepends the storage root inside the self._backend calls this class uses.
         """
         if self._backend.TYPE == "s3":
             return DEEPSPEED_SUFFIX
         elif self._backend.TYPE == "azure":
             from metaflow.metaflow_config import DATASTORE_SYSROOT_AZURE
+
             return os.path.join(DATASTORE_SYSROOT_AZURE, DEEPSPEED_SUFFIX)
         elif self._backend.TYPE == "gs":
             from metaflow.metaflow_config import DATASTORE_SYSROOT_GS
+
             return os.path.join(DATASTORE_SYSROOT_GS, DEEPSPEED_SUFFIX)
         else:
             raise NotImplementedError(
@@ -372,7 +382,7 @@ class DeepspeedDatastore(object):
             with open(path, "rb") as f:
                 self.put(key, f.read(), overwrite=overwrite)
             results.append(
-                self.get_datastore_key_location(key)[len(keyless_root):].strip("/")
+                self.get_datastore_key_location(key)[len(keyless_root) :].strip("/")
             )
         return results
 
@@ -574,7 +584,7 @@ def setup_mpi_env(
             try:
                 paths = []
                 num_workers_registered = 0
-                for i in range(1, world_size): # worker node indices start at 1
+                for i in range(1, world_size):  # worker node indices start at 1
                     path = os.path.join(worker_keys_path, str(i))
                     try:
                         datastore.get(path)
@@ -638,9 +648,7 @@ def setup_mpi_env(
         if len(datastore_hostfile_entry_paths) == world_size:
             hosts = []
             for datastore_path in datastore_hostfile_entry_paths:
-                hosts.append(
-                    datastore.get(datastore_path).blob.decode("utf-8")
-                )
+                hosts.append(datastore.get(datastore_path).blob.decode("utf-8"))
             break
         time.sleep(5)
 
