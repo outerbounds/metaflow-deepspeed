@@ -2,12 +2,9 @@ from metaflow.exception import MetaflowException
 
 
 class DeepspeedException(MetaflowException):
-    headline = ""
+    headline = "Deepspeed Command Failed"
 
-    def __init__(self, cmd):
-        msg = "The Deepspeed command \n\n{}\n\nfailed to complete.".format(
-            " ".join(cmd)
-        )
+    def __init__(self, msg):
         super(DeepspeedException, self).__init__(msg)
 
 

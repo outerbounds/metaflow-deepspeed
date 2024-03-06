@@ -18,8 +18,15 @@ import tempfile
 import os
 from io import BytesIO
 from collections import namedtuple
-from .exceptions import DeepspeedException, DatastoreKeyNotFoundError
+from .exceptions import DeepspeedException
 from .datastore import DeepspeedDatastore
+from .status_notifier import (
+    TaskStatusNotifier,
+    HeartbeatThread,
+    wait_for_task_completion,
+    HeartbeatTimeoutException,
+    TaskFailedException,
+)
 
 DEEPSPEED_SUFFIX = "mf.deepspeed_datastore"
 
@@ -78,9 +85,7 @@ class DeepspeedExecutor:
         self.flow = flow
         self.worker_polling_freq = worker_polling_freq
         self._flow_datastore = flow_datastore
-
-    def _construct_environment(self):
-        pass
+        self._heartbeat_thread = None  # This is only set on the control task
 
     def _exec_cmd(
         self,
@@ -89,7 +94,7 @@ class DeepspeedExecutor:
         entrypoint_args: Union[List[str], Dict[str, str]] = [],
     ):
         """
-        This will ONLY be executed by the control node. 
+        This will ONLY be executed by the control node.
         deepspeed_args: Dict[str] - arguments to pass to `exe`
         entrypoint: str - Python script for the Deepspeed launcher to run, such as a PyTorch or Huggingface training routine.
         entrypoint_args: Dict[str] - arguments to pass after `entrypoint`
@@ -146,7 +151,7 @@ class DeepspeedExecutor:
         with subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,  # pipe to Metaflow stdout. TODO: How to handle progress bar buffering like TQDM.
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
         ) as process:
             while process.poll() is None:
                 stdout = process.stdout.read1()
@@ -159,7 +164,8 @@ class DeepspeedExecutor:
                 )  # TODO: other mechanism to flush buffer, especially in progress bar case.
 
             if process.returncode != 0:
-                raise DeepspeedException(cmd)
+                return False, process.stderr.read().decode("utf-8")
+            return True, None
 
     def _resolve_storage_paths(
         self, push_results_dir_to_cloud, datastore, local_output_dir, cloud_output_dir
@@ -184,23 +190,75 @@ class DeepspeedExecutor:
                     cloud_output_dir = local_output_dir
         return cloud_output_dir
 
-    def _control_node_task(self, datastore, deepspeed_args, entrypoint, entrypoint_args):
-        self._exec_cmd(deepspeed_args, entrypoint, entrypoint_args)
-        datastore.put(
-            CONTROL_TASK_DONE_PATH, json.dumps({DEEPSPEED_JOB_COMPLETE_VAR: True})
+    def _control_node_task(
+        self, datastore: DeepspeedDatastore, deepspeed_args, entrypoint, entrypoint_args
+    ):
+        """
+        The control task will run the `deepspeed` command using all the arguments provided
+        to the `DeepSpeedExecutor.run` method. The control task will also publish heartbeats
+        to the datastore every 3 seconds to indicate that it is still running. These heartbeats
+        are used by the worker tasks to monitor the control task's status and essentially keep the workers alive.
+
+        Since the `DeepSpeedExecutor` is an abstraction over the `deepspeed` command, we will capture the stderr
+        when we call the `deepspeed` command and pass it down to the `DeepspeedException` if the `deepspeed` command fails.
+        """
+        # set the status that the control node is Up
+        _status_notifier = TaskStatusNotifier(datastore)
+        _status_notifier.running(0)
+        # start the heartbeat thread that writes the status to the datastore every 3 seconds
+        self._heartbeat_thread = HeartbeatThread(
+            _status_notifier, node_index=0, heartbeat_interval=3
         )
-    
-    def _worker_node_task(self, datastore):
-        control_done = False
-        while not control_done:
-            time.sleep(self.worker_polling_freq)
-            try:
-                control_done = json.loads(
-                    datastore.get(CONTROL_TASK_DONE_PATH).blob
-                )[DEEPSPEED_JOB_COMPLETE_VAR]
-            except DatastoreKeyNotFoundError:
-                control_done = False
-                continue
+        self._heartbeat_thread.start()
+        # run the deepspeed command
+        success_status, stderr = self._exec_cmd(
+            deepspeed_args, entrypoint, entrypoint_args
+        )
+        # stop the heartbeat thread upon failure / success of control task.
+        self._heartbeat_thread.stop()
+        # sets the status of the control node to finished or failed
+        if success_status:
+            _status_notifier.finished(0)
+        else:
+            _status_notifier.failed(0)
+            msg = f"The `deepspeed` command running on the control task has crashed. \n\n[stderr]: {str(stderr)}"
+            raise DeepspeedException(msg)
+
+    def _worker_node_task(
+        self, datastore: DeepspeedDatastore, node_index: int, heartbeat_timeout=60 * 10
+    ):
+        """
+        The worker tasks will poll for the control task's heartbeat and do nothing else.
+        Given that the tasks are run using MPI/ssh, the control task ends up controlling the worker directly (via ssh)
+        and metaflow doesn't need to do anything else.
+
+        Any failure in the worker's entry-point script will result in the failure at the control task level.
+        The only way a worker will end up failing will be :
+            - The control task fails (Which can happen the worker's entry-point script fails, resulting in the control task failing.)
+            - if the duration of the last heartbeat crosses the `heartbeat_timeout`
+
+        Hence the control flow on the worker only monitors the heartbeat/statues set from the control task.
+        """
+        # TODO : Make heartbeat timeout configurable
+        _status_notifier = TaskStatusNotifier(datastore)
+        # Worker task statuses are only for bookkeeping.
+        # They are not used by the control task in any way.
+        _status_notifier.running(node_index)
+        try:
+            # Poll the control task's heartbeat and fail if control task fails
+            # or if the heartbeat interval crosses the threshold.
+            wait_for_task_completion(
+                _status_notifier, node_index=0, heartbeat_timeout=heartbeat_timeout
+            )
+            _status_notifier.finished(node_index)
+        except HeartbeatTimeoutException:
+            _status_notifier.failed(node_index)
+            raise DeepspeedException(
+                f"Control task heartbeat timed out. Control task has not published a heartbeat for {heartbeat_timeout} seconds."
+            )
+        except TaskFailedException:
+            _status_notifier.failed(node_index)
+            raise DeepspeedException("Control task reported failure.")
 
     def run(
         self,
@@ -229,8 +287,8 @@ class DeepspeedExecutor:
                 datastore, deepspeed_args, entrypoint, entrypoint_args
             )
         else:  # worker node
-            self._worker_node_task(datastore)
-            
+            self._worker_node_task(datastore, node_index)
+
         # Push results to S3
         if push_results_dir_to_cloud:
             if not os.path.exists(local_output_dir):
