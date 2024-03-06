@@ -18,7 +18,7 @@ import os
 from io import BytesIO
 from collections import namedtuple
 from contextlib import contextmanager
-from .exceptions import DatastoreKeyNotFoundError, WaitLockFailed
+from .exceptions import DatastoreKeyNotFoundError, BarrierTimeoutException
 from .constants import DEEPSPEED_SUFFIX
 
 # mimic a subset of the behavior of the Metaflow S3Object
@@ -185,7 +185,7 @@ def wait_for_key_data(
 
 @contextmanager
 def task_sync_barrier(
-    lock_name,
+    barrier_name,
     datastore: DeepspeedDatastore,
     keys: List[str],
     max_wait_time=600,
@@ -196,12 +196,12 @@ def task_sync_barrier(
     A context manager that waits for keys to be written to the datastore and acts like a distributed-barrier.
     When multiple tasks are running in parallel, this context manager can be used to ensure that all tasks
     can wait on a certain keys to be written to the datastore. If the keys are not written to the datastore
-    after `max_wait_time` seconds, a `WaitLockFailed` error is raised.
-
-    This way only once all the keys are written to the datastore, the tasks will proceed.
+    after `max_wait_time` seconds, a `BarrierTimeoutException` error is raised. This way only once all the keys
+    are written to the datastore, the tasks will proceed. This context manager is used to ensure that all tasks
+    are in sync before proceeding to the next step.
 
     Args:
-        lock_name (str): The name of the lock. Used for debugging purposes.
+        barrier_name (str): The name of the lock. Used for debugging purposes.
         datastore (DeepspeedDatastore)
         keys (List[str]): The keys to wait for in the datastore.
         max_wait_time (float): The maximum time to wait for the keys to be written to the datastore.
@@ -211,6 +211,6 @@ def task_sync_barrier(
     try:
         data = wait_for_key_data(datastore, keys, max_wait_time, frequency)
     except DatastoreKeyNotFoundError:
-        raise WaitLockFailed(lock_name, description)
+        raise BarrierTimeoutException(barrier_name, description)
     else:
         yield data

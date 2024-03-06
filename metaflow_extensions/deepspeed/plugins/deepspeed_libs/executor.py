@@ -58,7 +58,7 @@ class DeepspeedExecutor:
     """
     Instances of the DeepspeedExecutor class are responsible for launching the Deepspeed command. There is one per Metaflow @step annotated with @deepspeed.
     DeepspeedExecutor consumes a list of hosts aka nodes aka k8s pods aka metaflow task containers, and information about how many processes to run on each.
-    In the constructor, the _scan_all_hosts function constructs the ~/.ssh/known_hosts list on each node, so they know how to communicate via passwordless ssh.
+    It assumes the passwordless ssh communication is setup on the all nodes without any user intervention.
 
     The Deepspeed decorator, which users specify in a Metaflow num_parallel task with @deepspeed, attaches an instance of this class to current.deepspeed.
         Using current.deepspeed.run, users can run the same Deepspeed launch command they would independently of Metaflow.
@@ -76,12 +76,7 @@ class DeepspeedExecutor:
     ) -> None:
         self.is_gpu = is_gpu
         self.n_slots_per_host = n_slots_per_host
-        self.hosts = [
-            h for h in hosts if h != socket.gethostbyname(socket.gethostname())
-        ] + [
-            "127.0.0.1"
-        ]  # control node can use localhost
-        self._scan_all_hosts()
+        self.hosts = hosts
         self.flow = flow
         self.worker_polling_freq = worker_polling_freq
         self._flow_datastore = flow_datastore
@@ -267,8 +262,9 @@ class DeepspeedExecutor:
         entrypoint_args: Union[List[str], Dict[str, str]] = [],
         push_results_dir_to_cloud: bool = False,
         local_output_dir: str = None,
-        cloud_output_dir: str = None,
-    ) -> None:
+        cloud_output_dir: str = None,  # TODO: Remove the stuff about `push_results_dir_to_cloud`
+    ) -> Union[str, None]:
+        """upon completion returns the final path of the `cloud_output_dir` if `push_results_dir_to_cloud` is set to true"""
         from metaflow import current
 
         node_index = current.parallel.node_index  # assumes parallel
@@ -293,10 +289,10 @@ class DeepspeedExecutor:
         if push_results_dir_to_cloud:
             if not os.path.exists(local_output_dir):
                 print(
-                    f"Deepspeed process completed, and local_output_dir `{local_output_dir}` does not exist, skipping push to S3.",
+                    f"Deepspeed process completed, and local_output_dir `{local_output_dir}` does not exist, skipping push to datastore.",
                     file=sys.stderr,
                 )
-                return
+                return None
             paths = datastore.put_files(
                 _get_path(local_output_dir, cloud_output_dir, node_index)
             )
@@ -305,27 +301,3 @@ class DeepspeedExecutor:
                 file=sys.stderr,
             )
             return datastore.get_datastore_file_location(cloud_output_dir)
-
-    def _scan_cmd(self, host):
-        return ["ssh-keyscan", "-H", host]
-
-    def _scan_all_hosts(self):
-        for host in self.hosts:
-            try:
-                result = subprocess.run(
-                    self._scan_cmd(host),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    check=True,
-                )
-                if result.returncode != 0:
-                    raise Exception(
-                        "Error adding host to known_hosts: "
-                        + result.stdout.decode("utf-8")
-                    )
-                else:
-                    with open(os.path.expanduser("~/.ssh/known_hosts"), "a") as f:
-                        f.write(result.stdout.decode("utf-8"))
-            except subprocess.CalledProcessError as e:
-                print(e.stdout)
-                raise e

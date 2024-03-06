@@ -18,12 +18,12 @@ class DatastoreKeyNotFoundError(MetaflowException):
         super(DatastoreKeyNotFoundError, self).__init__(msg)
 
 
-class WaitLockFailed(MetaflowException):
-    headline = "Wait Lock Failed"
+class BarrierTimeoutException(MetaflowException):
+    headline = "Barrier Timeout"
 
     def __init__(self, lock_name, description):
-        msg = f"A task has timedout after waiting for some keys to be written to the datastore.\n[Lock Name]:{lock_name}\n[Lock Info]: {description}"
-        super(WaitLockFailed, self).__init__(msg)
+        msg = f"Task has timed out after waiting for some keys to be written to the datastore.\n[Barrier Name]:{lock_name}\n[Barrier Info]: {description}"
+        super(BarrierTimeoutException, self).__init__(msg)
 
 
 class SSHKeyGenException(MetaflowException):
@@ -40,3 +40,20 @@ class SSHServiceRestartException(MetaflowException):
     def __init__(self, cmd, exception, worker_type, node_index):
         msg = f"Failed to restart the SSH service for the worker type {worker_type} and node index {node_index}. \n\n[Command]: {cmd}\n\n[Exception]: {exception}"
         super(SSHServiceRestartException, self).__init__(msg)
+
+
+class SSHScanUnsuccessfulException(MetaflowException):
+    headline = "`ssh-keyscan` Unsuccessful"
+
+    def __init__(
+        self,
+        bad_host,
+        keyscan_error,
+        ubf_context,
+        node_index,
+    ):
+        _err = "[couldn't capture standard-error]"
+        if keyscan_error is not None:
+            _err = keyscan_error
+        msg = f"Failed to capture the SSH keys using `ssh-keyscan` for the worker type {ubf_context} and node index {node_index}. `ssh-keyscan` failures indicate that the nodes are unable to communicate with each other via ssh. \n\n[Error]: {_err}\n\n[Bad Host]: {bad_host}"
+        super(SSHScanUnsuccessfulException, self).__init__(msg)

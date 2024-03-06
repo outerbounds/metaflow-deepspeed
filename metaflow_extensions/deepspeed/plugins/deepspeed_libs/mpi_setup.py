@@ -8,6 +8,7 @@ from .exceptions import (
     DatastoreKeyNotFoundError,
     SSHKeyGenException,
     SSHServiceRestartException,
+    SSHScanUnsuccessfulException,
 )
 from metaflow import current
 
@@ -95,12 +96,8 @@ def _control_task_ssh_setup(
     max_wait_time=600,
     frequency=0.1,
 ):
-    # loop until all workers have pushed their public keys
-    worker_keys_path = "%s/worker" % MPI_PUBLIC_KEY_PATH
     # All worker indexes start from 1
-    _worker_keys = [
-        os.path.join(worker_keys_path, str(i)) for i in range(1, world_size)
-    ]
+    _worker_keys = [KeyPaths.Worker(i) for i in range(1, world_size)]
     _lock_args = {
         "description": "Waiting for worker tasks to write public keys to datastore",
         "max_wait_time": max_wait_time,
@@ -177,7 +174,8 @@ def host_file_sync(datastore, world_size, max_wait_time=600, frequency=0.1):
         return hosts
 
 
-def _write_hostfile(hosts, n_slots, my_ip):
+def _write_hostfile(hosts, n_slots):
+    my_ip = get_my_ip()
     with open(HOSTFILE, "a") as f:
         for h in hosts:
             if h == my_ip:
@@ -185,6 +183,59 @@ def _write_hostfile(hosts, n_slots, my_ip):
             # slots is MPI lingo which is used with deepspeed when we do passwordless ssh connections between jobs
             # slots correlates to the number of processes of user code we wish to run on that instance.
             f.write("%s slots=%s\n" % (h, n_slots))
+
+
+def _scan_cmd(host):
+    return ["ssh-keyscan", "-H", host]
+
+
+def scan_one_host(host, max_retries=5, retry_delay=5):
+    curr_retry = 0
+    error_log = None
+    while curr_retry < max_retries:
+        try:
+            result = subprocess.run(
+                _scan_cmd(host),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            # TODO [LOGGING] : make the error visible to the user.
+            curr_retry += 1
+            if e.stderr:
+                error_log = e.stderr.decode("utf-8")
+            time.sleep(retry_delay)
+            continue
+        else:
+            return result.stdout.decode("utf-8"), None
+    return None, error_log  # Only when it failed all tries.
+
+
+def scan_all_hosts(hosts, ubf_context, node_index, max_retries=5, retry_delay=5):
+    host_keys = []
+    for host in hosts:
+        output, error_log = scan_one_host(host, max_retries, retry_delay)
+        if output is None:
+            raise SSHScanUnsuccessfulException(error_log, ubf_context, node_index, host)
+        host_keys.append(output)
+    return host_keys
+
+
+def setup_known_hosts(hosts, ubf_context, node_index):
+    """
+    create the known_hosts file with the public keys of all the hosts.
+    """
+    my_ip = get_my_ip()
+    _hosts = [h for h in hosts if h != my_ip]
+    _hosts += ["127.0.0.1"]
+    host_keys = scan_all_hosts(
+        _hosts, ubf_context, node_index, max_retries=5, retry_delay=5
+    )
+    known_hosts_path = os.path.expanduser("~/.ssh/known_hosts")
+    with open(known_hosts_path, "a") as f:
+        for key in host_keys:
+            f.write(key)
 
 
 def setup_mpi_env(
@@ -196,7 +247,7 @@ def setup_mpi_env(
 ):
     """
     1. create ssh keys on each host
-    2. based ont the type of task do the following :
+    2. based on the type of task do the following :
         - For control task wait for the workers to write the keys in the datastore .
             - Once all keys are written, set them on the authorized hosts file.
         - For the Worker tasks, wait for the control task key to be available.
@@ -252,13 +303,17 @@ def setup_mpi_env(
         node_index,
     )
     # Write all the IP's shared by the workers to the hostfile.
-    my_ip = get_my_ip()
+
     hosts = host_file_sync(
         datastore,
         world_size,
         max_wait_time=all_nodes_started_timeout,
         frequency=polling_frequency,
     )
-    _write_hostfile(hosts, n_slots, my_ip)
+    _write_hostfile(hosts, n_slots)
+
+    # At this point all hosts should be accessible so accordingly
+    # setup the known hosts file.
+    setup_known_hosts(hosts, ubf_context, node_index)
 
     return hosts
