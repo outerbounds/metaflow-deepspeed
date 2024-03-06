@@ -14,10 +14,12 @@ import socket
 import json
 import time
 import sys
+import tempfile
 import os
 from io import BytesIO
 from collections import namedtuple
-from .exceptions import DeepspeedException
+from .exceptions import DeepspeedException, DatastoreKeyNotFoundError
+from .datastore import DeepspeedDatastore
 
 DEEPSPEED_SUFFIX = "mf.deepspeed_datastore"
 
@@ -30,6 +32,19 @@ CONTROL_TASK_DONE_PATH = "control"
 MPI_PUBLIC_KEY_PATH = "public_keys"
 DEEPSPEED_ENV_FILE = ".deepspeed_env"  # https://github.com/microsoft/DeepSpeed/blob/24f20ef0a105d32f6085fe0d3b1c2f9324a6262c/docs/_tutorials/getting-started.md?plain=1#L230-L254
 DEEPSPEED_SUFFIX = "mf.deepspeed_datastore"
+
+
+def _get_path(local_output_dir, cloud_output_dir, node_index):
+    filepath_tuples = []
+    for path, subdirs, files in os.walk(local_output_dir):
+        for fname in files:
+            filepath_tuples.append(
+                (
+                    f"{cloud_output_dir}/{str(node_index)}/{os.path.relpath(os.path.join(path, fname), local_output_dir)}",
+                    os.path.join(path, fname),
+                )
+            )
+    return filepath_tuples
 
 
 class DeepspeedExecutor:
@@ -64,6 +79,9 @@ class DeepspeedExecutor:
         self.worker_polling_freq = worker_polling_freq
         self._flow_datastore = flow_datastore
 
+    def _construct_environment(self):
+        pass
+
     def _exec_cmd(
         self,
         deepspeed_args: Union[List[str], Dict[str, str]] = [],
@@ -71,6 +89,7 @@ class DeepspeedExecutor:
         entrypoint_args: Union[List[str], Dict[str, str]] = [],
     ):
         """
+        This will ONLY be executed by the control node. 
         deepspeed_args: Dict[str] - arguments to pass to `exe`
         entrypoint: str - Python script for the Deepspeed launcher to run, such as a PyTorch or Huggingface training routine.
         entrypoint_args: Dict[str] - arguments to pass after `entrypoint`
@@ -115,7 +134,9 @@ class DeepspeedExecutor:
         # Deepspeed automatically looks for this file to prepend the variables to its launcher command.
         with open(DEEPSPEED_ENV_FILE, "w") as f:
             for k, v in os.environ.items():
-                if k == "METAFLOW_INIT_SCRIPT":
+                if (
+                    k == "METAFLOW_INIT_SCRIPT"
+                ):  # TODO: Remove the MF_PARALLEL variables from here since it will be passed down to workers via SSH.
                     continue  # Don't pass these to deepspeed. Because of how deepspeed reads env vars and sets them in runner commands.
                 else:
                     json_string = json.dumps(v)
@@ -140,22 +161,9 @@ class DeepspeedExecutor:
             if process.returncode != 0:
                 raise DeepspeedException(cmd)
 
-    def run(
-        self,
-        deepspeed_args: Union[List[str], Dict[str, str]] = [],
-        entrypoint: str = None,
-        entrypoint_args: Union[List[str], Dict[str, str]] = [],
-        push_results_dir_to_cloud: bool = False,
-        local_output_dir: str = None,
-        cloud_output_dir: str = None,
-    ) -> None:
-        from metaflow import current
-
-        node_index = current.parallel.node_index  # assumes parallel
-        datastore = DeepspeedDatastore(
-            flow_datastore=self._flow_datastore, pathspec=current.pathspec
-        )
-
+    def _resolve_storage_paths(
+        self, push_results_dir_to_cloud, datastore, local_output_dir, cloud_output_dir
+    ) -> str:
         if push_results_dir_to_cloud and (
             datastore._backend.TYPE != "s3" and datastore._backend.TYPE != "azure"
         ):
@@ -174,115 +182,71 @@ class DeepspeedExecutor:
                     cloud_output_dir = local_output_dir[1:]
                 else:
                     cloud_output_dir = local_output_dir
+        return cloud_output_dir
+
+    def _control_node_task(self, datastore, deepspeed_args, entrypoint, entrypoint_args):
+        self._exec_cmd(deepspeed_args, entrypoint, entrypoint_args)
+        datastore.put(
+            CONTROL_TASK_DONE_PATH, json.dumps({DEEPSPEED_JOB_COMPLETE_VAR: True})
+        )
+    
+    def _worker_node_task(self, datastore):
+        control_done = False
+        while not control_done:
+            time.sleep(self.worker_polling_freq)
+            try:
+                control_done = json.loads(
+                    datastore.get(CONTROL_TASK_DONE_PATH).blob
+                )[DEEPSPEED_JOB_COMPLETE_VAR]
+            except DatastoreKeyNotFoundError:
+                control_done = False
+                continue
+
+    def run(
+        self,
+        deepspeed_args: Union[List[str], Dict[str, str]] = [],
+        entrypoint: str = None,
+        entrypoint_args: Union[List[str], Dict[str, str]] = [],
+        push_results_dir_to_cloud: bool = False,
+        local_output_dir: str = None,
+        cloud_output_dir: str = None,
+    ) -> None:
+        from metaflow import current
+
+        node_index = current.parallel.node_index  # assumes parallel
+        datastore = DeepspeedDatastore(
+            flow_datastore=self._flow_datastore, pathspec=current.pathspec
+        )
+
+        # Resolve storage paths
+        cloud_output_dir = self._resolve_storage_paths(
+            push_results_dir_to_cloud, datastore, local_output_dir, cloud_output_dir
+        )
 
         # Run the distributed job
         if node_index == 0:  # control node
-            self._exec_cmd(deepspeed_args, entrypoint, entrypoint_args)
-            datastore.put(
-                CONTROL_TASK_DONE_PATH, json.dumps({DEEPSPEED_JOB_COMPLETE_VAR: True})
+            self._control_node_task(
+                datastore, deepspeed_args, entrypoint, entrypoint_args
             )
         else:  # worker node
-            control_done = False
-            while not control_done:
-                time.sleep(self.worker_polling_freq)
-                try:
-                    control_done = json.loads(
-                        datastore.get(CONTROL_TASK_DONE_PATH).blob
-                    )[DEEPSPEED_JOB_COMPLETE_VAR]
-                except DeepspeedDatastoreNotFoundError:
-                    control_done = False
-                    continue
-
+            self._worker_node_task(datastore)
+            
         # Push results to S3
-        if push_results_dir_to_cloud and datastore._backend.TYPE == "s3":
-            s3 = S3(run=self.flow)
+        if push_results_dir_to_cloud:
             if not os.path.exists(local_output_dir):
                 print(
-                    f"Deepspeed process completed, and local_output_dir `{local_output_dir}` does not exist, skipping push to S3."
+                    f"Deepspeed process completed, and local_output_dir `{local_output_dir}` does not exist, skipping push to S3.",
+                    file=sys.stderr,
                 )
                 return
-            if not os.path.isdir(local_output_dir):
-                print(
-                    f"Deepspeed process completed, and local_output_dir `{local_output_dir}` is not a directory, skipping push to S3."
-                )
-                return
-            if len(os.listdir(local_output_dir)) == 0:
-                print(
-                    f"Deepspeed process completed, and local_output_dir `{local_output_dir}` is empty, skipping push to S3."
-                )
-                return
-            filepath_tuples = []
-            for path, subdirs, files in os.walk(local_output_dir):
-                for fname in files:
-                    filepath_tuples.append(
-                        (
-                            f"{cloud_output_dir}/{str(node_index)}/{os.path.relpath(os.path.join(path, fname), local_output_dir)}",
-                            os.path.join(path, fname),
-                        )
-                    )
-            print(
-                f"Pushing outputs in {local_output_dir} from node {node_index} to S3..."
-            )
-            path_result = s3.put_files(filepath_tuples)
-            s3_output_dir_full = (
-                f"{path_result[0][1].split(f'/{s3_output_dir}')[0]}/{s3_output_dir}"
-            )
-            print(f"Push completed. Results available at {s3_output_dir_full}.")
-            print(
-                f"\nTo access the S3 results, instantiate Metaflow's S3 client using:\n\twith S3(run=Run('{current.flow_name}/{current.run_id}')) as s3: ..."
+            paths = datastore.put_files(
+                _get_path(local_output_dir, cloud_output_dir, node_index)
             )
             print(
-                f"\nTo view metadata from this node use:\n\ts3.list_paths(['{s3_output_dir}/{node_index}'])"
+                f"Pushed {len(paths)} files to {datastore._backend.TYPE} at {cloud_output_dir}",
+                file=sys.stderr,
             )
-            print(
-                f"\nTo recurisvely download everything in {s3_output_dir_full} use:\n\ts3.get_recursive(keys=['{s3_output_dir}'])\n\n"
-            )
-            s3.close()
-
-        elif push_results_dir_to_cloud and datastore._backend.TYPE == "azure":
-            # don't use datastore here, use the AzureBlob class so results go into user storage space
-            from az_store import AzureBlob
-
-            blob_store = AzureBlob(run_pathspec=f"{current.flow_name}/{current.run_id}")
-
-            if not os.path.exists(local_output_dir):
-                print(
-                    f"Deepspeed process completed, and local_output_dir `{local_output_dir}` does not exist, skipping push to Azure Blob Storage."
-                )
-                return
-            if not os.path.isdir(local_output_dir):
-                print(
-                    f"Deepspeed process completed, and local_output_dir `{local_output_dir}` is not a directory, skipping push to Azure Blob Storage."
-                )
-                return
-            if len(os.listdir(local_output_dir)) == 0:
-                print(
-                    f"Deepspeed process completed, and local_output_dir `{local_output_dir}` is empty, skipping push to Azure Blob Storage."
-                )
-                return
-            filepath_tuples = []
-            for path, subdirs, files in os.walk(local_output_dir):
-                for fname in files:
-                    filepath_tuples.append(
-                        (
-                            f"{cloud_output_dir}/{str(node_index)}/{os.path.relpath(os.path.join(path, fname), local_output_dir)}",
-                            os.path.join(path, fname),
-                        )
-                    )
-            print(
-                f"Pushing outputs in {local_output_dir} from node {node_index} to Azure Blob Storage..."
-            )
-            blob_key_results = blob_store.put_files(filepath_tuples)
-            print(f"Push completed to these keys in the datastore: {blob_key_results}.")
-            print(
-                f"\nTo access the results, use the experimental Azure Blob client using:\n\tblob_store = AzureBlob(run_pathspec='{current.flow_name}/{current.run_id}')"
-            )
-            print(
-                f"\nTo view metadata from this node use:\n\tblob_store.list_paths(['{cloud_output_dir}/{node_index}'])"
-            )
-            print(
-                f"\nTo recurisvely download everything in the blob store for this run use:\n\tblob_store.get_files(key_paths=[(p.key, p.key) for p in blob_store.list_paths(['{cloud_output_dir}'])])\n\n"
-            )
+            return datastore.get_datastore_file_location(cloud_output_dir)
 
     def _scan_cmd(self, host):
         return ["ssh-keyscan", "-H", host]
