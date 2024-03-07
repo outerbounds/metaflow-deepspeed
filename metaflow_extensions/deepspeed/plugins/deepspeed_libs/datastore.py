@@ -201,12 +201,12 @@ def task_sync_barrier(
     are in sync before proceeding to the next step.
 
     Args:
-        barrier_name (str): The name of the lock. Used for debugging purposes.
+        barrier_name (str): The name of the barrier. Used for debugging purposes.
         datastore (DeepspeedDatastore)
         keys (List[str]): The keys to wait for in the datastore.
         max_wait_time (float): The maximum time to wait for the keys to be written to the datastore.
         frequency (float): The frequency to check the datastore for the keys.
-        description (str): A description of the lock. Used for debugging purposes.
+        description (str): A description of the barrier. Used for debugging purposes.
     """
     try:
         data = wait_for_key_data(datastore, keys, max_wait_time, frequency)

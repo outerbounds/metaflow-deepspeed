@@ -1,10 +1,11 @@
 from metaflow import FlowSpec, step, deepspeed, current, kubernetes, environment
 import json
+from metaflow.profilers import gpu_profile
 
 N_NODES = 4
-IMAGE = "public.ecr.aws/p7g1e3j4/deepspeed:6"
+IMAGE = "docker.io/eddieob/deepspeed:6"
 N_GPU = 1
-MEMORY = "16000"
+MEMORY = "12000"
 N_CPU = 2
 
 class HelloDeepspeed(FlowSpec):
@@ -16,13 +17,14 @@ class HelloDeepspeed(FlowSpec):
     @environment(vars={"NCCL_SOCKET_IFNAME": "eth0"})
     @kubernetes(image=IMAGE, gpu=N_GPU, memory=MEMORY, cpu=N_CPU)
     @deepspeed
+    @gpu_profile(interval=1)
     @step
     def train(self):
         current.deepspeed.run(
             entrypoint="hi-deepspeed.py",
-            entrypoint_args={
-                "bind_cores_to_rank": "",
-                "launcher": "impi"
+            deepspeed_args={
+                # "bind_cores_to_rank": "",
+                # "launcher": "impi"
             }
         )
         self.next(self.join)

@@ -131,6 +131,7 @@ def _worker_task_ssh_setup(datastore, ssh_dir, max_wait_time=600, frequency=0.1)
 
 
 def update_ssh_config_and_restart_sshd(ssh_config_options, ubf_context, node_index):
+    # This is un-used but can be used later if necessary.
     with open("/etc/ssh/sshd_config", "a") as f:
         f.write("\n".join(ssh_config_options))
 
@@ -281,27 +282,9 @@ def setup_mpi_env(
 
     # At this point nearly all workers would be running the same line of code since
     # they are all aware of the other worker's public keys.
+    # Todo : See if we can find a way to get rid of permissioning setting here.
     os.chmod(os.path.join(ssh_dir, "authorized_keys"), 0o600)
 
-    # Instead of doing sshd restart, instead update the ssh_config file.
-    # The ssh config can hold `PubKeyAuthentication` and `RSAAuthentication` set for
-    # every IP address created from all the workers.
-
-    # Core question : is the sshd service restart done because there is a change in the id_rsa/authorizedhosts
-    # along with ssh_d or because there is only change in sshd_config file. If it is just the sshd change then we can get away without restarting the service
-    # by just changing the ssh_config file with the right hosts.
-
-    # enable passwordless ssh and done with SUDO!
-    # This is not the best way but we can contribute more time
-    # if the usage of this is more frequent and requires rootless environments.
-    update_ssh_config_and_restart_sshd(
-        [
-            "PubKeyAuthentication yes",
-            "RSAAuthentication yes",
-        ],
-        ubf_context,
-        node_index,
-    )
     # Write all the IP's shared by the workers to the hostfile.
 
     hosts = host_file_sync(

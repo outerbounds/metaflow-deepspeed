@@ -84,6 +84,8 @@ def wait_for_task_to_be_reachable(
         time.sleep(1)
         timeout -= 1
         if timeout <= 0:
+            # TODO: Improve timeout error messages to make it clearer to the user that
+            # the task was unreachable and we hit a timeout for that.
             raise TimeoutError
 
 

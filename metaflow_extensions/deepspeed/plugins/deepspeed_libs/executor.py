@@ -54,6 +54,16 @@ def _get_path(local_output_dir, cloud_output_dir, node_index):
     return filepath_tuples
 
 
+def _dict_to_args(d: Dict[str, str]) -> List[str]:
+    data = []
+    for k, v in d.items():
+        if v == "":
+            data.append(f"--{k}")
+        else:
+            data.extend([f"--{k}", json.dumps(v)])
+    return data
+
+
 class DeepspeedExecutor:
     """
     Instances of the DeepspeedExecutor class are responsible for launching the Deepspeed command. There is one per Metaflow @step annotated with @deepspeed.
@@ -97,6 +107,8 @@ class DeepspeedExecutor:
 
         # Container to build up the command to be run in a subprocess.
         cmd = ["deepspeed"]
+        if type(deepspeed_args) == dict:
+            deepspeed_args = _dict_to_args(deepspeed_args)
 
         # Construct the deepspeed distributed args.
         if "--hostfile" not in deepspeed_args:
@@ -122,11 +134,7 @@ class DeepspeedExecutor:
             )
         # cmd.extend(entrypoint_args)
         if entrypoint_args is not None and isinstance(entrypoint_args, dict):
-            for arg, val in entrypoint_args.items():
-                if val == "" or val == None:
-                    cmd.append("--%s" % arg)
-                else:
-                    cmd.extend(["--%s" % arg, str(val)])
+            cmd.extend(_dict_to_args(entrypoint_args))
         elif entrypoint_args is not None and isinstance(entrypoint_args, list):
             cmd.extend(entrypoint_args)
 
@@ -206,6 +214,7 @@ class DeepspeedExecutor:
         )
         self._heartbeat_thread.start()
         # run the deepspeed command
+        # TODO : Fix the subprocess reading and logging logic.
         success_status, stderr = self._exec_cmd(
             deepspeed_args, entrypoint, entrypoint_args
         )
