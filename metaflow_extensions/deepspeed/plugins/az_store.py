@@ -70,10 +70,12 @@ class AzureBlob(object):
 
     def get_datastore_key_location(self, key: Optional[str] = None):
         if self._step_name is None:
-            return os.path.join(self._run_pathspec, key if key else "").rstrip("/")
+            return os.path.join(
+                self._datastore_root, self._run_pathspec, key if key else ""
+            ).rstrip("/")
         else:
             return os.path.join(
-                self._run_pathspec, self._step_name, key if key else ""
+                self._datastore_root, self._run_pathspec, self._step_name, key if key else ""
             ).rstrip("/")
 
     def put(self, key: str, obj: Union[str, bytes], overwrite: bool = False):
