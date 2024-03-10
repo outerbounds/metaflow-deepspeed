@@ -67,34 +67,28 @@ class DeepspeedDecorator(ParallelDecorator):
         self.environment = environment
         self.flow_datastore = flow_datastore
 
-        self.is_batch = False
-        self.is_k8s = False
-        self.is_local = False
-        for deco in decos:
-            if isinstance(deco, KubernetesDecorator):
-                self.is_k8s = True
-                break
-            elif isinstance(deco, BatchDecorator):
-                self.is_batch = True
-                break
-        else:
-            self.local = True
-
-        for deco in decos:
+        for deco in decos: 
             if deco.name in ["resources", "kubernetes", "batch"]:
-                compute_deco_attrs = compute_resource_attributes(
-                    decos, deco, step, {"cpu": "1", "gpu": "0"}
-                )
-                try:
-                    self.n_slots = int(compute_deco_attrs["gpu"])
+                if deco.attributes['gpu']:
                     self.is_gpu = True
-                except KeyError:
-                    self.n_slots = int(compute_deco_attrs["cpu"])
+                    self.n_slots = deco.attributes['gpu']
+                else:
                     self.is_gpu = False
-                if not self.n_slots > 0:
-                    self.n_slots = int(compute_deco_attrs["cpu"])
-                    self.is_gpu = False
-                break
+                    self.n_slots = deco.attributes['cpu']
+
+                # compute_deco_attrs = compute_resource_attributes(
+                #     decos, deco, step, {"cpu": "1", "gpu": "0"}
+                # )
+                # try:
+                #     self.n_slots = int(compute_deco_attrs["gpu"])
+                #     self.is_gpu = True
+                # except KeyError:
+                #     self.n_slots = int(compute_deco_attrs["cpu"])
+                #     self.is_gpu = False
+                # if not self.n_slots > 0:
+                #     self.n_slots = int(compute_deco_attrs["cpu"])
+                #     self.is_gpu = False
+                # break
 
     def task_pre_step(
         self,
