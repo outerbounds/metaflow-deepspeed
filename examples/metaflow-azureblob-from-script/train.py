@@ -4,7 +4,8 @@ from random import choice
 from argparse import ArgumentParser
 
 # Experimental version of Azure Blob support.
-from az_store import AzureBlob
+from metaflow.plugins.az_store import AzureBlob
+
 
 def do_metaflow_operation(run_pathspec, global_rank):
 

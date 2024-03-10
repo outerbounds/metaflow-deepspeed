@@ -1,5 +1,5 @@
 from metaflow import FlowSpec, step, deepspeed, kubernetes, current
-import json
+
 
 N_NODES = 2
 # IMAGE = "public.ecr.aws/p7g1e3j4/deepspeed:6"
@@ -30,7 +30,7 @@ class MetaflowDeepspeedAzureClientExample(FlowSpec):
 
     @step
     def end(self):
-        from az_store import AzureBlob 
+        from metaflow.plugins.az_store import AzureBlob
         blob_store = AzureBlob(run_pathspec=f"{current.flow_name}/{current.run_id}")
         for key_id in range(N_NODES * N_CPU):
             print(f"output_{key_id}.txt: ", blob_store.get(f"output_{key_id}.txt").text)

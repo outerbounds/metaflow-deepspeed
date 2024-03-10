@@ -2,7 +2,7 @@ from metaflow import FlowSpec, step, deepspeed, kubernetes, current, S3
 import json
 
 N_NODES = 2
-IMAGE = "eddieob/deepspeed:6"
+IMAGE = "docker.io/eddieob/deepspeed:6"
 MEMORY = "16000"
 N_CPU = 2
 

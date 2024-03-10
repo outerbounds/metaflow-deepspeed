@@ -1,10 +1,11 @@
-from metaflow import FlowSpec, step, deepspeed, kubernetes, current
-import json
+from metaflow import FlowSpec, step, deepspeed, batch, current, environment
+# from metaflow.profilers import gpu_profile
 
 N_NODES = 2
-IMAGE = "eddieob/deepspeed:6"
+IMAGE = "docker.io/eddieob/deepspeed:6"
 MEMORY = "16000"
 N_CPU = 2
+N_GPU = 1
 
 
 class MetaflowDeepspeedHFCallbackExample(FlowSpec):
@@ -15,7 +16,9 @@ class MetaflowDeepspeedHFCallbackExample(FlowSpec):
     def start(self):
         self.next(self.train, num_parallel=N_NODES)
 
-    @kubernetes(image=IMAGE, memory="16000", cpu=N_CPU)
+    # @gpu_profile(interval=1)
+    @environment(vars={'NCCL_SOCKET_IFNAME': 'eth0'})
+    @batch(image=IMAGE, memory=MEMORY, cpu=N_CPU, gpu=N_GPU)
     @deepspeed
     @step
     def train(self):
@@ -38,14 +41,14 @@ class MetaflowDeepspeedHFCallbackExample(FlowSpec):
     def join(self, inputs):
         self.next(self.end)
 
-    @kubernetes(image=IMAGE, memory="16000", cpu=N_CPU)
+    @batch(image=IMAGE, memory=MEMORY, cpu=N_CPU)
     @step
     def end(self):
 
         # Download the results from the S3 bucket.
-        from train import MetaflowS3Sync
-        s3 = MetaflowS3Sync(run_pathspec=f"{current.flow_name}/{current.run_id}")
-        s3.download(all_nodes=True)
+        from metaflow.plugins.hf_callbacks import DeepspeedHFTrainerS3Sync
+        checkpoint_handler = DeepspeedHFTrainerS3Sync(run_pathspec=f"{current.flow_name}/{current.run_id}")
+        checkpoint_handler.download(all_nodes=True)
 
         # Print the results.
         import os

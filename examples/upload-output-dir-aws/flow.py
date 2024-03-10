@@ -1,5 +1,4 @@
-from metaflow import FlowSpec, step, deepspeed, current, kubernetes, environment, S3
-import json
+from metaflow import FlowSpec, step, deepspeed, current, batch, environment, S3
 
 N_NODES = 2
 IMAGE = "public.ecr.aws/p7g1e3j4/deepspeed:6" #"eddieob/deepspeed:6"
@@ -9,20 +8,11 @@ N_CPU = 2
 
 class MetaflowDeepspeedDirectoryUpload(FlowSpec):
 
-    messages = [
-        # one of these messages will be written to a file in tmpfs by each process.
-        "good evening friend",
-        "bonsoir mon ami",
-        "こんばんは、私の友人",
-        "guten Abend mein Freund",
-        "boa noite meu amigo",
-    ]
-
     @step
     def start(self):
         self.next(self.train, num_parallel=N_NODES)
 
-    @kubernetes(image=IMAGE, memory=MEMORY, cpu=N_CPU, use_tmpfs=True)
+    @batch(image=IMAGE, memory=MEMORY, cpu=N_CPU, use_tmpfs=True)
     @deepspeed
     @step
     def train(self):
@@ -40,10 +30,7 @@ class MetaflowDeepspeedDirectoryUpload(FlowSpec):
         # If you don't want to automatically push to S3, don't specify push_results_dir_to_s3, local_output_dir, or s3_output_dir.
         current.deepspeed.run(
             entrypoint="train.py",
-            entrypoint_args={
-                "output-dir": self.local_output_dir,
-                "contents": choice(self.messages),
-            },
+            entrypoint_args={"output-dir": self.local_output_dir},
             local_output_dir=self.local_output_dir,
             cloud_output_dir=self.s3_output_dir,  # If you don't specify this, it will be metaflow_temp, or whatever you change tmpfs path to.
             push_results_dir_to_cloud=True,
@@ -63,7 +50,11 @@ class MetaflowDeepspeedDirectoryUpload(FlowSpec):
         This is a separate task running locally.
         Follow the instructions that the current.deepspeed.run prints to stdout when push_results_dir_to_s3=True.
         """
-        with S3(run=self) as s3:  # result versioned by this flow
+        from metaflow.metaflow_config import DATASTORE_SYSROOT_S3
+        from metaflow.plugins.deepspeed_libs.constants import DEEPSPEED_SUFFIX
+        import os
+        s3root = os.path.join(DATASTORE_SYSROOT_S3, DEEPSPEED_SUFFIX, current.flow_name, current.run_id, 'train')
+        with S3(s3root=s3root) as s3:
             objs = s3.get_recursive(keys=[self.s3_output_dir])
             for obj in objs:
                 with open(obj.path, "r") as f:

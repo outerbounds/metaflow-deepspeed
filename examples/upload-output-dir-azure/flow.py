@@ -50,8 +50,9 @@ class MetaflowDeepspeedDirectoryUpload(FlowSpec):
         This is a separate task running locally.
         Follow the instructions that the current.deepspeed.run prints to stdout when push_results_dir_to_cloud=True.
         """
-        from az_store import AzureBlob    
-        blob_store = AzureBlob(run_pathspec=f"{current.flow_name}/{current.run_id}")
+        from metaflow.plugins.az_store import AzureBlob
+        from metaflow.plugins.deepspeed_libs.constants import DEEPSPEED_SUFFIX
+        blob_store = AzureBlob(run_pathspec=f"{DEEPSPEED_SUFFIX}/{current.flow_name}/{current.run_id}", step_name='train')
         paths = blob_store.list_paths([self.output_dir])
         blob_store.get_files([(p.key, p.key) for p in paths])
         for p in paths:

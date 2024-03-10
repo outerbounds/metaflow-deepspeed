@@ -1,9 +1,10 @@
 from metaflow import FlowSpec, step, deepspeed, kubernetes, current
-import json
+from metaflow.profilers import gpu_profile
 
 N_NODES = 2
 IMAGE = "docker.io/eddieob/deepspeed:6"
 MEMORY = "16000"
+N_GPU = 1
 N_CPU = 2
 
 
@@ -15,7 +16,8 @@ class MetaflowDeepspeedHFCallbackExample(FlowSpec):
     def start(self):
         self.next(self.train, num_parallel=N_NODES)
 
-    @kubernetes(image=IMAGE, memory="16000", cpu=N_CPU)
+    @gpu_profile(interval=1)
+    @kubernetes(image=IMAGE, memory=MEMORY, cpu=N_CPU, gpu=N_GPU)
     @deepspeed
     @step
     def train(self):
@@ -43,8 +45,8 @@ class MetaflowDeepspeedHFCallbackExample(FlowSpec):
     def end(self):
 
         # Download the results from the Azure Blob storage bucket.
-        from train import MetaflowAzureBlobSync
-        blob_store = MetaflowAzureBlobSync(run_pathspec=f"{current.flow_name}/{current.run_id}")
+        from metaflow.plugins.hf_callbacks import DeepspeedHFTrainerAzureBlobSync
+        blob_store = DeepspeedHFTrainerAzureBlobSync(run_pathspec=f"{current.flow_name}/{current.run_id}")
         blob_store.download(all_nodes=True)
         # You could use the above to download a pretrained checkpoint in the `train` step, instead of training from scratch.
 
