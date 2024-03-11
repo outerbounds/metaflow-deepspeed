@@ -76,20 +76,6 @@ class DeepspeedDecorator(ParallelDecorator):
                     self.is_gpu = False
                     self.n_slots = deco.attributes['cpu']
 
-                # compute_deco_attrs = compute_resource_attributes(
-                #     decos, deco, step, {"cpu": "1", "gpu": "0"}
-                # )
-                # try:
-                #     self.n_slots = int(compute_deco_attrs["gpu"])
-                #     self.is_gpu = True
-                # except KeyError:
-                #     self.n_slots = int(compute_deco_attrs["cpu"])
-                #     self.is_gpu = False
-                # if not self.n_slots > 0:
-                #     self.n_slots = int(compute_deco_attrs["cpu"])
-                #     self.is_gpu = False
-                # break
-
     def task_pre_step(
         self,
         step_name,
