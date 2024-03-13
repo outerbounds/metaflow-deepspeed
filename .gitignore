@@ -1,0 +1,4 @@
+.metaflow/*
+*.egg-info
+examples/*/.metaflow/*
+*.pyc

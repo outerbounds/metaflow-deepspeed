@@ -1,0 +1,45 @@
+FROM --platform=linux/amd64 ubuntu:20.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies for OpenSSH, OpenMPI, and some debugging utilities
+RUN apt-get update -y && apt-get upgrade -y && apt-get install git cmake sudo curl vim wget net-tools openssh-server openssh-client gcc g++ openmpi-bin openmpi-common pdsh libopenmpi-dev libgtk2.0-dev libaio-dev -y && apt-get clean && apt-get purge
+
+# Download and install Micromamba.
+RUN curl -sL https://micro.mamba.pm/api/micromamba/linux-64/1.1.0 \
+  | sudo tar -xvj -C /usr/local bin/micromamba
+ENV MAMBA_EXE=/usr/local/bin/micromamba \
+    MAMBA_ROOT_PREFIX=/home/user/micromamba \
+    CONDA_PREFIX=/home/user/micromamba \
+    PATH=/home/user/micromamba/bin:$PATH
+
+# Create a new environment and install Python deps.
+RUN micromamba create -y -n base && \
+    micromamba shell init --shell=bash --prefix="$MAMBA_ROOT_PREFIX"
+RUN micromamba install python=3.11 pip -c conda-forge -y && python -m pip install --upgrade pip
+
+# Install Deepspeed and friends ~ https://www.deepspeed.ai/tutorials/accelerator-abstraction-interface/#run-deepspeed-model-on-cpu
+RUN /home/user/micromamba/bin/python -m pip install --user torch==2.2.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+RUN /home/user/micromamba/bin/python -m pip install intel_extension_for_pytorch
+# RUN /home/user/micromamba/bin/python -m pip install oneccl_bind_pt-2.2.0+cpu-cp311-cp311-linux_x86_64.whl -f https://developer.intel.com/ipex-whl-stable-cpu
+RUN wget https://intel-extension-for-pytorch.s3.amazonaws.com/ipex_stable/cpu/oneccl_bind_pt-2.2.0%2Bcpu-cp311-cp311-linux_x86_64.whl
+RUN /home/user/micromamba/bin/python -m pip install oneccl_bind_pt-2.2.0+cpu-cp311-cp311-linux_x86_64.whl
+RUN git clone https://github.com/oneapi-src/oneCCL && cd oneCCL && mkdir build && cd build && cmake .. && make && make install
+RUN /home/user/micromamba/bin/python -m pip install --user ninja transformers datasets accelerate pytorch-lightning pandas scikit-learn mpi4py
+RUN /home/user/micromamba/bin/python -m pip install --user deepspeed
+ENV PATH="${PATH}:/root/.local/bin"
+
+# Build OpenMPI
+RUN wget https://www.open-mpi.org/software/ompi/v4.1/downloads/openmpi-4.1.1.tar.gz && tar -xvzf openmpi-4.1.1.tar.gz
+RUN cd openmpi-4.1.1 && ./configure --prefix=/usr/local && make && make install
+ENV PATH=”$PATH:/home/.openmpi/bin”
+ENV LD_LIBRARY_PATH=”$LD_LIBRARY_PATH:/home/.openmpi/lib”
+
+# Start SSH service
+RUN service ssh start
+
+# Expose docker port 22
+EXPOSE 22
+
+# Start SSH daemon - Need to do in Metaflow, since Metaflow replaces CMD
+CMD ["/usr/sbin/sshd","-D"]
