@@ -1,23 +1,12 @@
-from metaflow.unbounded_foreach import UBF_CONTROL
-from metaflow.plugins.parallel_decorator import (
-    ParallelDecorator,
-    _local_multinode_control_task_step_func,
-)
 from metaflow.exception import MetaflowException
-import metaflow
 
 # from metaflow import Run as MetaflowRun
-from functools import partial
-from typing import List, Dict, Union, Tuple
+from typing import List, Dict, Union
 import subprocess
 import socket
 import json
-import time
 import sys
-import tempfile
 import os
-from io import BytesIO
-from collections import namedtuple
 from .exceptions import DeepspeedException
 from .datastore import DeepspeedDatastore
 from .status_notifier import (
@@ -29,12 +18,7 @@ from .status_notifier import (
 )
 from .constants import (
     HOSTFILE,
-    DEEPSPEED_ENV_FILE,
-    DEEPSPEED_JOB_COMPLETE_VAR,
-    PUBLIC_KEY_RECEIVED_VAR,
-    CONTROL_TASK_DONE_PATH,
-    MPI_PUBLIC_KEY_PATH,
-    DEEPSPEED_SUFFIX
+    DEEPSPEED_ENV_FILE
 )
 
 

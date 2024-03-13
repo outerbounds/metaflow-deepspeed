@@ -3,9 +3,7 @@ import subprocess
 import socket
 import time
 import os
-from hashlib import sha256
 from .exceptions import (
-    DatastoreKeyNotFoundError,
     SSHKeyGenException,
     SSHServiceRestartException,
     SSHScanUnsuccessfulException,

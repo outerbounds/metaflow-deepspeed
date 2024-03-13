@@ -1,17 +1,4 @@
-from metaflow.unbounded_foreach import UBF_CONTROL
-from metaflow.plugins.parallel_decorator import (
-    ParallelDecorator,
-    _local_multinode_control_task_step_func,
-)
-from metaflow.exception import MetaflowException
-import metaflow
-
-# from metaflow import Run as MetaflowRun
-from functools import partial
 from typing import List, Dict, Union, Tuple
-import subprocess
-import socket
-import json
 import time
 import sys
 import os
@@ -40,7 +27,6 @@ class DeepspeedDatastore(object):
         _, run_id, step_name, _ = pathspec.split("/")
         self._run_id = run_id
         self._step_name = step_name
-        self._pathspec = pathspec
 
     @property
     def get_storage_root(self):
@@ -88,7 +74,6 @@ class DeepspeedDatastore(object):
         )
 
     def put_files(self, key_paths: List[Tuple[str, str]], overwrite=False):
-        keyless_root = self.get_datastore_key_location()
         results = []
         for key, path in key_paths:
             with open(path, "rb") as f:
@@ -100,7 +85,7 @@ class DeepspeedDatastore(object):
         "Get a single object residing in the datastore's `key` index."
         datastore_url = self.get_datastore_file_location(key)
         with self._backend.load_bytes([datastore_url]) as get_results:
-            for key, path, meta in get_results:
+            for key, path, _ in get_results:
                 if path is not None:
                     with open(path, "rb") as f:
                         blob_bytes = f.read()
