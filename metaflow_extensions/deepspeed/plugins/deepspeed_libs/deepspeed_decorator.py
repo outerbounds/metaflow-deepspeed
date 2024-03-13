@@ -1,23 +1,13 @@
+import time
+import os
+
+import metaflow
+from metaflow import current
 from metaflow.unbounded_foreach import UBF_CONTROL
 from metaflow.plugins.parallel_decorator import (
     ParallelDecorator,
     _local_multinode_control_task_step_func,
 )
-from metaflow.exception import MetaflowException
-import metaflow
-
-# from metaflow import Run as MetaflowRun
-from functools import partial
-from typing import List, Dict, Union, Tuple
-import subprocess
-import socket
-import json
-import time
-import tempfile
-import sys
-import os
-from io import BytesIO
-from metaflow import current
 
 from .executor import DeepspeedExecutor
 from .mpi_setup import setup_mpi_env
@@ -60,9 +50,6 @@ class DeepspeedDecorator(ParallelDecorator):
         )
 
     def step_init(self, flow, graph, step, decos, environment, flow_datastore, logger):
-        from metaflow.plugins.kubernetes.kubernetes_decorator import KubernetesDecorator
-        from metaflow.plugins.aws.batch.batch_decorator import BatchDecorator
-        from metaflow.plugins.aws.aws_utils import compute_resource_attributes
 
         self.environment = environment
         self.flow_datastore = flow_datastore
