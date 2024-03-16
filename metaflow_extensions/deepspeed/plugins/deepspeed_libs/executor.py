@@ -128,7 +128,7 @@ class DeepspeedExecutor:
         with subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,  # pipe to Metaflow stdout. TODO: How to handle progress bar buffering like TQDM.
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
         ) as process:
             while process.poll() is None:
                 stdout = process.stdout.read1()
