@@ -38,7 +38,7 @@ def _get_path(local_output_dir, cloud_output_dir, node_index):
 def _dict_to_args(d: Dict[str, str]) -> List[str]:
     data = []
     for k, v in d.items():
-        if v == "":
+        if v == "" or v is None:
             data.append(f"--{k}")
         else:
             data.extend([f"--{k}", json.dumps(v).replace('"', "")])
@@ -48,7 +48,7 @@ def _dict_to_args(d: Dict[str, str]) -> List[str]:
 class DeepspeedExecutor:
     """
     Instances of the DeepspeedExecutor class are responsible for launching the Deepspeed command. There is one per Metaflow @step annotated with @deepspeed.
-    DeepspeedExecutor consumes a list of hosts aka nodes aka k8s pods aka metaflow task containers, and information about how many processes to run on each.
+    DeepspeedExecutor consumes a list of host IP addresses corresponding to batch job nodes or kubernetes pods and information about how many processes to run on each.
     It assumes the passwordless ssh communication is setup on the all nodes without any user intervention.
 
     The Deepspeed decorator, which users specify in a Metaflow num_parallel task with @deepspeed, attaches an instance of this class to current.deepspeed.
@@ -79,13 +79,7 @@ class DeepspeedExecutor:
         entrypoint: str = None,
         entrypoint_args: Union[List[str], Dict[str, str]] = [],
     ):
-        """
-        This will ONLY be executed by the control node.
-        deepspeed_args: Dict[str] - arguments to pass to `exe`
-        entrypoint: str - Python script for the Deepspeed launcher to run, such as a PyTorch or Huggingface training routine.
-        entrypoint_args: Dict[str] - arguments to pass after `entrypoint`
-        """
-
+    
         # Container to build up the command to be run in a subprocess.
         cmd = ["deepspeed"]
         if type(deepspeed_args) == dict:
@@ -113,7 +107,6 @@ class DeepspeedExecutor:
             raise MetaflowException(
                 "current.deepspeed.run(..., entrypoint=<SCRIPT>, ...) arg must be specified."
             )
-        # cmd.extend(entrypoint_args)
         if entrypoint_args is not None and isinstance(entrypoint_args, dict):
             cmd.extend(_dict_to_args(entrypoint_args))
         elif entrypoint_args is not None and isinstance(entrypoint_args, list):
