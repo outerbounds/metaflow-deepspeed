@@ -114,21 +114,28 @@ class DeepspeedExecutor:
 
         # Write env_var=value to file.
         # Deepspeed automatically looks for this file to prepend the variables to its launcher command.
-        with open(DEEPSPEED_ENV_FILE, "w") as f:
-            for k, v in os.environ.items():
-                if (
-                    k == "METAFLOW_INIT_SCRIPT"
-                ):  # TODO: Remove the MF_PARALLEL variables from here since it will be passed down to workers via SSH.
-                    continue  # Don't pass these to deepspeed. Because of how deepspeed reads env vars and sets them in runner commands.
-                else:
-                    json_string = json.dumps(v)
-                    f.write(f"{k}={json_string}\n")
+        env = os.environ.copy()
+        if len(self.hosts) > 1:
+            with open(DEEPSPEED_ENV_FILE, "w") as f:
+                for k, v in os.environ.items():
+                    if (
+                        k == "METAFLOW_INIT_SCRIPT"
+                    ):  # TODO: Remove the MF_PARALLEL variables from here since it will be passed down to workers via SSH.
+                        continue  # Don't pass these to deepspeed. Because of how deepspeed reads env vars and sets them in runner commands.
+                    else:
+                        json_string = json.dumps(v)
+                        f.write(f"{k}={json_string}\n")
+        
+        elif len(self.hosts) == 1:  # if multi-node, deepspeed does this itself.
+            curr_path = os.path.abspath(".")
+            env["PYTHONPATH"] = curr_path
 
         # Launch the Deepspeed run.
         with subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,  # pipe to Metaflow stdout. TODO: How to handle progress bar buffering like TQDM.
             stderr=subprocess.STDOUT,
+            env=env
         ) as process:
             while process.poll() is None:
                 stdout = process.stdout.read1()
