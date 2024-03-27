@@ -1,7 +1,7 @@
-from metaflow import FlowSpec, step, deepspeed, batch, current, environment
+from metaflow import FlowSpec, step, deepspeed, kubernetes, current, environment
 # from metaflow.profilers import gpu_profile
 
-N_NODES = 2
+N_NODES = 1
 IMAGE = "docker.io/eddieob/deepspeed:6"
 MEMORY = "16000"
 N_CPU = 2
@@ -18,7 +18,7 @@ class MetaflowDeepspeedHFCallbackExample(FlowSpec):
 
     # @gpu_profile(interval=1)
     @environment(vars={'NCCL_SOCKET_IFNAME': 'eth0'})
-    @batch(image=IMAGE, memory=MEMORY, cpu=N_CPU, gpu=N_GPU)
+    @kubernetes(image=IMAGE, memory=MEMORY, cpu=N_CPU, gpu=N_GPU)
     @deepspeed
     @step
     def train(self):
@@ -41,7 +41,7 @@ class MetaflowDeepspeedHFCallbackExample(FlowSpec):
     def join(self, inputs):
         self.next(self.end)
 
-    @batch(image=IMAGE, memory=MEMORY, cpu=N_CPU)
+    @kubernetes(image=IMAGE, memory=MEMORY, cpu=N_CPU)
     @step
     def end(self):
 
