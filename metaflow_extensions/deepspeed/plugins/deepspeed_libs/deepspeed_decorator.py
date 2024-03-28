@@ -11,6 +11,7 @@ from metaflow.plugins.parallel_decorator import (
 
 from .executor import DeepspeedExecutor
 from .mpi_setup import setup_mpi_env
+import os
 
 """
 Control Flow : 
@@ -54,14 +55,22 @@ class DeepspeedDecorator(ParallelDecorator):
         self.environment = environment
         self.flow_datastore = flow_datastore
 
-        for deco in decos: 
+        for deco in decos:
             if deco.name in ["resources", "kubernetes", "batch"]:
-                if deco.attributes['gpu']:
+                if deco.attributes["gpu"]:
                     self.is_gpu = True
-                    self.n_slots = deco.attributes['gpu']
+                    self.n_slots = deco.attributes["gpu"]
                 else:
                     self.is_gpu = False
-                    self.n_slots = deco.attributes['cpu']
+                    self.n_slots = deco.attributes["cpu"]
+            # Since Netflix/metaflow#1775 and Netflix/metaflow#1776 add the
+            # port and the `jobsets` implementation without services, we
+            # can just go about setting the port to 22 if it is not set.
+            # If the older implementation with `requires_passwordless_ssh` is
+            # if being used then as a fallback the attribute will still exist.
+            if deco.name == "kubernetes":
+                if "port" in deco.defaults:
+                    deco.attributes["port"] = 22
 
     def task_pre_step(
         self,
