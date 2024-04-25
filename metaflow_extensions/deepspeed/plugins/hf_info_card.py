@@ -8,7 +8,7 @@ from metaflow.cards import (
     Artifact
 )
 import math
-from metaflow.plugins.cards.card_modules.components import with_default_component_id
+from metaflow.plugins.cards.card_modules.components import with_default_component_id, TaskToDict , ArtifactsComponent , render_safely
 import datetime
 from metaflow.metaflow_current import current
 import json
@@ -19,10 +19,7 @@ import time
 
 try:
     from transformers import (
-        TrainerCallback,
-        TrainerState,
-        TrainerControl,
-        TrainingArguments,
+        TrainerCallback
     )
 except ImportError:
     class TrainerCallback:
@@ -249,51 +246,29 @@ class MetaflowHuggingFaceCardCallback(TrainerCallback):
             }
         self._save()
 
+class ArtifactTable(Artifact):
+    def __init__(
+        self, data_dict
+    ):
+        self._data = data_dict
+        self._task_to_dict = TaskToDict(only_repr=True)
 
-def json_to_markdown_table(json_data):
-    table_rows = []
-    for k, v in json_data.items():
-        table_rows.append(
-            [
-                Markdown(
-                    f"### {k}",
-                ),
-                Markdown(
-                    f"```{v}```",
-                ),
-            ]
-        )
-    return Table(data=table_rows)
+    @with_default_component_id
+    @render_safely
+    def render(self):
+        _art_list = []
+        for k,v in self._data.items():
+            _art = self._task_to_dict.infer_object(v)
+            _art["name"] = k
+            _art_list.append(_art)
 
-def json_to_markdown_table_format(json_data):
-    # Start with the header row
-    markdown_table = "| **Key** | **Value** |\n"
-
-    # Separator row
-    markdown_table += "| --- | --- |\n"
-
-    # Data rows
-    for key, value in json_data.items():
-        # Safely dump the value to JSON format to handle complex objects
-        formatted_value = json.dumps(value)
-        markdown_table += f"| **{key}** | ```{formatted_value}``` |\n"
-    
-    return markdown_table
-    
+        af_component = ArtifactsComponent(data=_art_list)
+        af_component.component_id = self.component_id
+        return af_component.render()
 
 def json_to_artifact_table(data):
-    _data = []
-    for k,v in data.items():
-        _data.append([Markdown(f"**{k}**"), Artifact(v)])
-    return Table(data=_data)
+    return ArtifactTable(data)
         
-
-def json_object_to_markdown_table(data):
-    # Start with the header row
-    return Markdown(
-        json_to_markdown_table_format(data)
-    )
-
 
 class InfoCollectorThread(Thread):
     def __init__(
