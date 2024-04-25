@@ -348,12 +348,14 @@ class HuggingFaceCardDecorator(StepDecorator, CardDecoratorInjector):
             step_name,
             HuggingfaceModelCardRefresher.CARD_ID,
             "blank",
+            refresh_interval=10,
         )
         self.attach_card_decorator(
             flow,
             step_name,
             HuggingfaceModelMetricsRefresher.CARD_ID,
             "blank",
+            refresh_interval=0.5
         )
         _show_profiler = self.attributes["profiler"]
         if _show_profiler:
@@ -362,6 +364,7 @@ class HuggingFaceCardDecorator(StepDecorator, CardDecoratorInjector):
                 step_name,
                 HuggingfaceProfilingCardRefresher.CARD_ID,
                 "blank",
+                refresh_interval=20,
             )
 
     
@@ -383,9 +386,9 @@ class HuggingFaceCardDecorator(StepDecorator, CardDecoratorInjector):
             if _show_profiler:
                 async_refresher_profiler = AsyncPeriodicRefresher(
                     HuggingfaceProfilingCardRefresher(),
-                    updater_interval=1,
-                    collector_interval=0.5,
-                    file_name=DEFAULT_FILE_NAME,
+                    updater_interval=5,
+                    collector_interval=10,
+                    file_name="profiling.json",
                 )
                 async_refresher_profiler.start()
             try:

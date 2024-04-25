@@ -42,7 +42,8 @@ class CardDecoratorInjector:
         flow,
         step_name,
         card_id,
-        card_type
+        card_type,
+        refresh_interval=5,
     ):
         """
         This method is called `step_init` in your StepDecorator code since 
@@ -62,7 +63,7 @@ class CardDecoratorInjector:
             if self._first_time_init_check(step_dag_node, card_id):
                 self._set_first_time_init_cached_value(step_name, card_id, True)
                 _decorators._attach_decorators_to_step(
-                    step_dag_node, ["card:type=%s,id=%s" % (card_type, card_id)]
+                    step_dag_node, ["card:type=%s,id=%s,refresh_interval=%s" % (card_type, card_id, str(refresh_interval))]
                 )
             else:
                 self._set_first_time_init_cached_value(step_name, card_id, False)
