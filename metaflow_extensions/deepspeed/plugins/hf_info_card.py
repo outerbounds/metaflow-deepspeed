@@ -5,7 +5,9 @@ from metaflow.cards import (
     VegaChart,
     ProgressBar,
     MetaflowCardComponent,
+    Artifact
 )
+import math
 from metaflow.plugins.cards.card_modules.components import with_default_component_id
 import datetime
 from metaflow.metaflow_current import current
@@ -138,8 +140,6 @@ class LineChart(MetaflowCardComponent):
         ytitle,
         x_name,
         y_name,
-        width,
-        height,
         with_params=False,
         x_axis_temporal=False,
     ):
@@ -151,8 +151,6 @@ class LineChart(MetaflowCardComponent):
             ytitle=ytitle,
             x_name=x_name,
             y_name=y_name,
-            width=width,
-            height=height,
             with_params=with_params,
             x_axis_temporal=x_axis_temporal,
         )
@@ -241,13 +239,14 @@ class MetaflowHuggingFaceCardCallback(TrainerCallback):
                 data = {"step": state.global_step, "value": logs[metric]}
                 self._metrics[metric].append(data)
 
-        self._runtime_info = {
-            "Train runtime": logs["train_runtime"],
-            "Train samples / sec": logs["train_samples_per_second"],
-            "Train steps / sec": logs["train_steps_per_second"],
-            "Total Floating point operations": logs["total_flos"],
-            "TFLOPs": logs["total_flos"] // 1e12 / logs["train_runtime"],
-        }
+        if "train_runtime" in logs:
+            self._runtime_info = {
+                "Train runtime": logs["train_runtime"],
+                "Train samples / sec": logs["train_samples_per_second"],
+                "Train steps / sec": logs["train_steps_per_second"],
+                "Total Floating point operations": logs["total_flos"],
+                "TFLOPs": logs["total_flos"] // 1e12 / logs["train_runtime"],
+            }
         self._save()
 
 
@@ -266,8 +265,7 @@ def json_to_markdown_table(json_data):
         )
     return Table(data=table_rows)
 
-
-def json_object_to_markdown_table(data):
+def json_to_markdown_table_format(json_data):
     # Start with the header row
     markdown_table = "| **Key** | **Value** |\n"
 
@@ -275,35 +273,26 @@ def json_object_to_markdown_table(data):
     markdown_table += "| --- | --- |\n"
 
     # Data rows
-    for key, value in data.items():
+    for key, value in json_data.items():
         # Safely dump the value to JSON format to handle complex objects
         formatted_value = json.dumps(value)
         markdown_table += f"| **{key}** | ```{formatted_value}``` |\n"
+    
+    return markdown_table
+    
 
-    return Markdown(markdown_table)
+def json_to_artifact_table(data):
+    _data = []
+    for k,v in data.items():
+        _data.append([Markdown(f"**{k}**"), Artifact(v)])
+    return Table(data=_data)
+        
 
-
-def setup_card_runtime(card_id, trainer_configuration, model_config):
-    current_card = current.card[card_id]
-    current_card.append(
-        Markdown(
-            "# Huggingface Model Training [%s][Attempt:%s]"
-            % (current.pathspec, current.retry_count),
-        )
+def json_object_to_markdown_table(data):
+    # Start with the header row
+    return Markdown(
+        json_to_markdown_table_format(data)
     )
-    current_card.append(
-        Markdown(
-            "## Trainer Configuration",
-        )
-    )
-    current_card.append(json_to_markdown_table(trainer_configuration))
-    current_card.append(
-        Markdown(
-            "## Model Configuration",
-        )
-    )
-    current_card.append(json_to_markdown_table(model_config))
-    current_card.refresh()
 
 
 class InfoCollectorThread(Thread):
@@ -336,9 +325,9 @@ class InfoCollectorThread(Thread):
             with open(self._file_name, "r") as f:
                 return json.load(f), None
         except FileNotFoundError as e:
-            return {}, str(e)
+            return {}, e
         except Exception as e:
-            return {}, str(e)
+            return {}, e
 
     def run(self):
         while self._exit_event.is_set() is False:
@@ -403,20 +392,25 @@ class CardUpdaterThread(Thread):
         self.join()
 
 
-class HuggingfaceModelCardRefresher(CardRefresher):
-    CARD_ID = MetaflowHuggingFaceCardCallback.MODEL_CARD_ID
+class HuggingfaceModelMetricsRefresher(CardRefresher):
+    CARD_ID = "training_metrics"
 
     def __init__(self) -> None:
         self._metrics_charts = {}
-        self._runtime_info_table = None
-        self._last_updated_on = None
-        self._progress_bars = {}
+        self._runtime_info_table = {
 
+        }
+        self._progress_bars = {}
+        self._last_updated_on = None
+        self._already_rendered = False
+    
+    
     def render_card_fresh(self, current_card, data):
+        self._already_rendered = True
         current_card.clear()
         current_card.append(
             Markdown(
-                "# Huggingface Model Training [%s][Attempt:%s]"
+                "## Huggingface Model Training Metrics \n## %s [Attempt:%s]"
                 % (current.pathspec, current.retry_count),
             )
         )
@@ -430,31 +424,34 @@ class HuggingfaceModelCardRefresher(CardRefresher):
             )
         )
         self._progress_bars["epoch"] = ProgressBar(
-            title="Epoch",
-            max_value=data["training_state"]["num_train_epochs"],
-            current_value=data["training_state"]["epoch"],
+            label="Epoch",
+            max=data["training_state"]["num_train_epochs"],
+            value=round(data["training_state"]["epoch"], 2),
         )
         self._progress_bars["global_step"] = ProgressBar(
-            title="Global Step",
-            max_value=data["training_state"]["max_steps"],
-            current_value=data["training_state"]["global_step"],
+            label="Global Step",
+            max=data["training_state"]["max_steps"],
+            value=data["training_state"]["global_step"],
         )
         _steps_per_epoch = int(
             data["training_state"]["max_steps"]
-            // data["training_state"]["num_train_epochs"]
+            / data["training_state"]["num_train_epochs"]
         )
+        _steps_in_epoch_current = int(data["training_state"]["global_step"] - (
+            _steps_per_epoch * math.floor(data["training_state"]["epoch"])
+        ))
         self._progress_bars["epoch_steps"] = ProgressBar(
-            title="Steps in Epoch",
-            max_value=_steps_per_epoch,
-            current_value=data["training_state"]["global_step"]
-            - (_steps_per_epoch * data["training_state"]["epoch"]),
+            label="Steps in Epoch",
+            max=_steps_per_epoch,
+            value=_steps_in_epoch_current,
         )
         current_card.append(
             Table(
                 data=[
                     [
                         self._progress_bars["epoch"],
-                    ][
+                    ],
+                    [
                         self._progress_bars["global_step"],
                     ],
                     [
@@ -463,28 +460,6 @@ class HuggingfaceModelCardRefresher(CardRefresher):
                 ]
             )
         )
-
-        current_card.append(
-            Markdown(
-                "## Trainer Configuration",
-            )
-        )
-        current_card.append(
-            json_object_to_markdown_table(data["trainer_configuration"])
-        )
-        current_card.append(
-            Markdown(
-                "## Model Configuration",
-            )
-        )
-        current_card.append(json_object_to_markdown_table(data["model_config"]))
-        current_card.append(
-            Markdown(
-                "## Runtime Information",
-            )
-        )
-        self._runtime_info_table = json_object_to_markdown_table(data["runtime_info"])
-        current_card.append(self._runtime_info_table, id="runtime_info")
         current_card.append(
             Markdown(
                 "## Metrics",
@@ -501,16 +476,35 @@ class HuggingfaceModelCardRefresher(CardRefresher):
                     with_params=False,
                     x_axis_temporal=False,
                 )
-            self._metrics_charts[metric]._spec["data"]["values"] = data["metrics"][
+            self._metrics_charts[metric].spec["data"]["values"] = data["metrics"][
                 metric
             ]
             current_card.append(self._metrics_charts[metric], id=metric)
+        if len(data["runtime_info"]) > 0:
+            current_card.append(
+                Markdown(
+                    "## Runtime Information",
+                )
+            )
+            for k in data["runtime_info"]:
+                self._runtime_info_table[k] = Markdown(
+                    str(data["runtime_info"][k])
+                )
+            current_card.append(
+                Table(
+                    data=[
+                        [Markdown("**%s**" % k), self._runtime_info_table[k]]
+                        for k in self._runtime_info_table
+                    ]
+                )
+            )
+
         current_card.refresh()
 
     def on_startup(self, current_card):
         current_card.append(
             Markdown(
-                "# Huggingface Model Training [%s][Attempt:%s]"
+                "# Huggingface Model Training Metrics\n## %s [Attempt:%s]"
                 % (current.pathspec, current.retry_count),
             )
         )
@@ -522,38 +516,48 @@ class HuggingfaceModelCardRefresher(CardRefresher):
         current_card.refresh()
 
     def on_error(self, current_card, error_message):
-        current_card.append(
-            Markdown(
-                f"## Error: {error_message}",
+        if isinstance(error_message, FileNotFoundError):
+            return
+        
+        if not self._already_rendered:
+            current_card.clear()
+            current_card.append(
+                Markdown(
+                    f"## Error: {str(error_message)}",
+                )
             )
-        )
-        current_card.refresh()
+            current_card.refresh()
 
     def update_only_components(self, current_card, data_object):
         self._last_updated_on.update(
             f"_Last data-update on: {data_object['created_on']}_"
         )
-        self._runtime_info_table.update(
-            json_object_to_markdown_table(data_object["runtime_info"])
-        )
+        if len(data_object["runtime_info"]) > 0:
+            for k in data_object["runtime_info"]:
+                self._runtime_info_table[k].update(
+                    str(data_object["runtime_info"][k])
+                )
+
         for metric in data_object["metrics"]:
-            self._metrics_charts[metric]._spec["data"]["values"] = data_object[
+            self._metrics_charts[metric].spec["data"]["values"] = data_object[
                 "metrics"
             ][metric]
 
         self._progress_bars["epoch"].update(
-            data_object["training_state"]["epoch"],
+            round(data_object["training_state"]["epoch"], 2),
         )
         self._progress_bars["global_step"].update(
             data_object["training_state"]["global_step"],
         )
         _steps_per_epoch = int(
             data_object["training_state"]["max_steps"]
-            // data_object["training_state"]["num_train_epochs"]
+            / data_object["training_state"]["num_train_epochs"]
         )
+        _steps_in_epoch_current = int(data_object["training_state"]["global_step"] - (
+            _steps_per_epoch * math.floor(data_object["training_state"]["epoch"])
+        ))
         self._progress_bars["epoch_steps"].update(
-            data_object["training_state"]["global_step"]
-            - (_steps_per_epoch * data_object["training_state"]["epoch"]),
+            _steps_in_epoch_current
         )
         current_card.refresh()
 
@@ -567,9 +571,85 @@ class HuggingfaceModelCardRefresher(CardRefresher):
         elif len(data_object["metrics"]) != len(self._metrics_charts):
             self.render_card_fresh(current_card, data_object)
             return
+        elif (len(data_object["runtime_info"]) > 0 and len(self._runtime_info_table) == 0):
+            self.render_card_fresh(current_card, data_object)
+            return
         else:
             self.update_only_components(current_card, data_object)
             return
+
+
+class HuggingfaceModelCardRefresher(CardRefresher):
+    CARD_ID = "training_variables"
+
+    def __init__(self) -> None:
+        self._rendered = False
+
+    def render_card_fresh(self, current_card, data):        
+        self._rendered = True
+        current_card.clear()
+        current_card.append(
+            Markdown(
+                "# Huggingface Model Training Configuration \n## %s [Attempt:%s]"
+                % (current.pathspec, current.retry_count),
+            )
+        )
+        current_card.append(
+            Markdown(
+                "## Trainer Configuration",
+            )
+        )
+        current_card.append(
+            json_to_artifact_table(data["trainer_configuration"])
+        )
+        current_card.append(
+            Markdown(
+                "## Model Configuration",
+            )
+        )
+        current_card.append(json_to_artifact_table(data["model_config"]))
+        current_card.refresh()
+
+    def on_startup(self, current_card):
+        current_card.append(
+            Markdown(
+                "# Huggingface Model Training Config\n## %s[Attempt:%s]"
+                % (current.pathspec, current.retry_count),
+            )
+        )
+        current_card.append(
+            Markdown(
+                "_waiting for data to appear_",
+            )
+        )
+        current_card.refresh()
+
+    def on_error(self, current_card, error_message):
+        if isinstance(error_message, FileNotFoundError):
+            return
+        if not self._rendered:
+            current_card.clear()
+            current_card.append(
+                Markdown(
+                    f"## Error: {str(error_message)}",
+                )
+            )
+            current_card.refresh()
+
+    def on_update(self, current_card, data_object):
+        if self._rendered:
+            return
+        data_object_keys = set(data_object.keys())
+        if len(data_object_keys) == 0:
+            return
+        required_keys = set([
+            "trainer_configuration",
+            "model_config",
+        ])
+        if not data_object_keys.issuperset(required_keys):
+            return
+
+        self.render_card_fresh(current_card, data_object)
 
 
 class AsyncPeriodicRefresher:
@@ -600,14 +680,26 @@ def huggingface_card(func):
 
     @wraps(func)
     def wrapper(*args, **kwargs):
-        async_refresher = AsyncPeriodicRefresher(
+        async_refresher_model_card = AsyncPeriodicRefresher(
             HuggingfaceModelCardRefresher(), 
-            interval=1, 
+            updater_interval=3, 
+            collector_interval=2,
+            file_name=MetaflowHuggingFaceCardCallback.DEFAULT_FILE_NAME
+        )
+        async_refresher_metrics = AsyncPeriodicRefresher(
+            HuggingfaceModelMetricsRefresher(),
+            updater_interval=1, 
+            collector_interval=0.5,
             file_name=MetaflowHuggingFaceCardCallback.DEFAULT_FILE_NAME
         )
         try:
+            async_refresher_model_card.start()
+            async_refresher_metrics.start()
             func(*args, **kwargs)
         finally:
-            async_refresher.stop()
+            async_refresher_model_card.stop()
+            async_refresher_metrics.stop()
 
-    return card(id=MetaflowHuggingFaceCardCallback.MODEL_CARD_ID, type="blank", refresh_interval=0.5)(wrapper)
+    _model_card = card(id=HuggingfaceModelCardRefresher.CARD_ID, type="blank", refresh_interval=0.5)
+    _metrics_card = card(id=HuggingfaceModelMetricsRefresher.CARD_ID, type="blank", refresh_interval=0.5)
+    return _metrics_card(_model_card(wrapper))
