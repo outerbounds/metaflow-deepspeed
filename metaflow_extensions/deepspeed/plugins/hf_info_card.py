@@ -5,10 +5,15 @@ from metaflow.cards import (
     VegaChart,
     ProgressBar,
     MetaflowCardComponent,
-    Artifact
+    Artifact,
 )
 import math
-from metaflow.plugins.cards.card_modules.components import with_default_component_id, TaskToDict , ArtifactsComponent , render_safely
+from metaflow.plugins.cards.card_modules.components import (
+    with_default_component_id,
+    TaskToDict,
+    ArtifactsComponent,
+    render_safely,
+)
 import datetime
 from metaflow.metaflow_current import current
 import json
@@ -18,12 +23,12 @@ from threading import Thread, Event
 import time
 
 try:
-    from transformers import (
-        TrainerCallback
-    )
+    from transformers import TrainerCallback
 except ImportError:
+
     class TrainerCallback:
         pass
+
 
 def update_spec_data(spec, data):
     spec["data"]["values"].append(data)
@@ -246,10 +251,9 @@ class MetaflowHuggingFaceCardCallback(TrainerCallback):
             }
         self._save()
 
+
 class ArtifactTable(Artifact):
-    def __init__(
-        self, data_dict
-    ):
+    def __init__(self, data_dict):
         self._data = data_dict
         self._task_to_dict = TaskToDict(only_repr=True)
 
@@ -257,7 +261,7 @@ class ArtifactTable(Artifact):
     @render_safely
     def render(self):
         _art_list = []
-        for k,v in self._data.items():
+        for k, v in self._data.items():
             _art = self._task_to_dict.infer_object(v)
             _art["name"] = k
             _art_list.append(_art)
@@ -266,9 +270,10 @@ class ArtifactTable(Artifact):
         af_component.component_id = self.component_id
         return af_component.render()
 
+
 def json_to_artifact_table(data):
     return ArtifactTable(data)
-        
+
 
 class InfoCollectorThread(Thread):
     def __init__(
@@ -372,14 +377,11 @@ class HuggingfaceModelMetricsRefresher(CardRefresher):
 
     def __init__(self) -> None:
         self._metrics_charts = {}
-        self._runtime_info_table = {
-
-        }
+        self._runtime_info_table = {}
         self._progress_bars = {}
         self._last_updated_on = None
         self._already_rendered = False
-    
-    
+
     def render_card_fresh(self, current_card, data):
         self._already_rendered = True
         current_card.clear()
@@ -412,9 +414,10 @@ class HuggingfaceModelMetricsRefresher(CardRefresher):
             data["training_state"]["max_steps"]
             / data["training_state"]["num_train_epochs"]
         )
-        _steps_in_epoch_current = int(data["training_state"]["global_step"] - (
-            _steps_per_epoch * math.floor(data["training_state"]["epoch"])
-        ))
+        _steps_in_epoch_current = int(
+            data["training_state"]["global_step"]
+            - (_steps_per_epoch * math.floor(data["training_state"]["epoch"]))
+        )
         self._progress_bars["epoch_steps"] = ProgressBar(
             label="Steps in Epoch",
             max=_steps_per_epoch,
@@ -462,9 +465,7 @@ class HuggingfaceModelMetricsRefresher(CardRefresher):
                 )
             )
             for k in data["runtime_info"]:
-                self._runtime_info_table[k] = Markdown(
-                    str(data["runtime_info"][k])
-                )
+                self._runtime_info_table[k] = Markdown(str(data["runtime_info"][k]))
             current_card.append(
                 Table(
                     data=[
@@ -493,7 +494,7 @@ class HuggingfaceModelMetricsRefresher(CardRefresher):
     def on_error(self, current_card, error_message):
         if isinstance(error_message, FileNotFoundError):
             return
-        
+
         if not self._already_rendered:
             current_card.clear()
             current_card.append(
@@ -509,9 +510,7 @@ class HuggingfaceModelMetricsRefresher(CardRefresher):
         )
         if len(data_object["runtime_info"]) > 0:
             for k in data_object["runtime_info"]:
-                self._runtime_info_table[k].update(
-                    str(data_object["runtime_info"][k])
-                )
+                self._runtime_info_table[k].update(str(data_object["runtime_info"][k]))
 
         for metric in data_object["metrics"]:
             self._metrics_charts[metric].spec["data"]["values"] = data_object[
@@ -528,12 +527,11 @@ class HuggingfaceModelMetricsRefresher(CardRefresher):
             data_object["training_state"]["max_steps"]
             / data_object["training_state"]["num_train_epochs"]
         )
-        _steps_in_epoch_current = int(data_object["training_state"]["global_step"] - (
-            _steps_per_epoch * math.floor(data_object["training_state"]["epoch"])
-        ))
-        self._progress_bars["epoch_steps"].update(
-            _steps_in_epoch_current
+        _steps_in_epoch_current = int(
+            data_object["training_state"]["global_step"]
+            - (_steps_per_epoch * math.floor(data_object["training_state"]["epoch"]))
         )
+        self._progress_bars["epoch_steps"].update(_steps_in_epoch_current)
         current_card.refresh()
 
     def on_update(self, current_card, data_object):
@@ -546,7 +544,9 @@ class HuggingfaceModelMetricsRefresher(CardRefresher):
         elif len(data_object["metrics"]) != len(self._metrics_charts):
             self.render_card_fresh(current_card, data_object)
             return
-        elif (len(data_object["runtime_info"]) > 0 and len(self._runtime_info_table) == 0):
+        elif (
+            len(data_object["runtime_info"]) > 0 and len(self._runtime_info_table) == 0
+        ):
             self.render_card_fresh(current_card, data_object)
             return
         else:
@@ -560,7 +560,7 @@ class HuggingfaceModelCardRefresher(CardRefresher):
     def __init__(self) -> None:
         self._rendered = False
 
-    def render_card_fresh(self, current_card, data):        
+    def render_card_fresh(self, current_card, data):
         self._rendered = True
         current_card.clear()
         current_card.append(
@@ -574,9 +574,7 @@ class HuggingfaceModelCardRefresher(CardRefresher):
                 "## Trainer Configuration",
             )
         )
-        current_card.append(
-            json_to_artifact_table(data["trainer_configuration"])
-        )
+        current_card.append(json_to_artifact_table(data["trainer_configuration"]))
         current_card.append(
             Markdown(
                 "## Model Configuration",
@@ -617,10 +615,12 @@ class HuggingfaceModelCardRefresher(CardRefresher):
         data_object_keys = set(data_object.keys())
         if len(data_object_keys) == 0:
             return
-        required_keys = set([
-            "trainer_configuration",
-            "model_config",
-        ])
+        required_keys = set(
+            [
+                "trainer_configuration",
+                "model_config",
+            ]
+        )
         if not data_object_keys.issuperset(required_keys):
             return
 
@@ -629,7 +629,13 @@ class HuggingfaceModelCardRefresher(CardRefresher):
 
 class AsyncPeriodicRefresher:
 
-    def __init__(self, card_referesher: CardRefresher, updater_interval=1, collector_interval=1, file_name=None):
+    def __init__(
+        self,
+        card_referesher: CardRefresher,
+        updater_interval=1,
+        collector_interval=1,
+        file_name=None,
+    ):
         assert card_referesher.CARD_ID is not None, "CARD_ID must be defined"
         self._collector_thread = InfoCollectorThread(
             interval=collector_interval, file_name=file_name
@@ -656,16 +662,16 @@ def huggingface_card(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         async_refresher_model_card = AsyncPeriodicRefresher(
-            HuggingfaceModelCardRefresher(), 
-            updater_interval=3, 
+            HuggingfaceModelCardRefresher(),
+            updater_interval=3,
             collector_interval=2,
-            file_name=MetaflowHuggingFaceCardCallback.DEFAULT_FILE_NAME
+            file_name=MetaflowHuggingFaceCardCallback.DEFAULT_FILE_NAME,
         )
         async_refresher_metrics = AsyncPeriodicRefresher(
             HuggingfaceModelMetricsRefresher(),
-            updater_interval=1, 
+            updater_interval=1,
             collector_interval=0.5,
-            file_name=MetaflowHuggingFaceCardCallback.DEFAULT_FILE_NAME
+            file_name=MetaflowHuggingFaceCardCallback.DEFAULT_FILE_NAME,
         )
         try:
             async_refresher_model_card.start()
@@ -675,6 +681,10 @@ def huggingface_card(func):
             async_refresher_model_card.stop()
             async_refresher_metrics.stop()
 
-    _model_card = card(id=HuggingfaceModelCardRefresher.CARD_ID, type="blank", refresh_interval=0.5)
-    _metrics_card = card(id=HuggingfaceModelMetricsRefresher.CARD_ID, type="blank", refresh_interval=0.5)
+    _model_card = card(
+        id=HuggingfaceModelCardRefresher.CARD_ID, type="blank", refresh_interval=0.5
+    )
+    _metrics_card = card(
+        id=HuggingfaceModelMetricsRefresher.CARD_ID, type="blank", refresh_interval=0.5
+    )
     return _metrics_card(_model_card(wrapper))
