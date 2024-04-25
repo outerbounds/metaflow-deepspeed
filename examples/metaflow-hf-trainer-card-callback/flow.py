@@ -1,6 +1,6 @@
 from metaflow import FlowSpec, step, deepspeed, kubernetes, current
 from metaflow.profilers import gpu_profile
-from metaflow.plugins.hf_info_card import huggingface_card
+from metaflow import huggingface_card
 
 N_NODES = 2
 IMAGE = "docker.io/eddieob/deepspeed:6"
@@ -17,7 +17,7 @@ class MetaflowDeepspeedHFCallbackExample(FlowSpec):
     def start(self):
         self.next(self.train, num_parallel=N_NODES)
 
-    @huggingface_card
+    @huggingface_card(profiler=True)
     @gpu_profile(interval=1)
     @kubernetes(image=IMAGE, memory=MEMORY, cpu=N_CPU, gpu=N_GPU)
     @deepspeed

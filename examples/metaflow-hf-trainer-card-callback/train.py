@@ -21,7 +21,7 @@ try: # in case you want to download to local env without deepspeed
 except ImportError:
     pass
 
-from metaflow.plugins.hf_info_card import MetaflowHuggingFaceCardCallback
+from metaflow.huggingface_card_callback import MetaflowHuggingFaceCardCallback
 
 def main(
     checkpoint_dir: str = "training_outputs",
