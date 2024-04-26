@@ -51,7 +51,6 @@ class MetaflowHuggingFaceCardCallback(TrainerCallback):
         self, 
         tracked_metrics=["loss", "grad_norm"], 
         save_file_name=None,
-        run_profiling=False,
     ) -> None:
         super().__init__()
         
