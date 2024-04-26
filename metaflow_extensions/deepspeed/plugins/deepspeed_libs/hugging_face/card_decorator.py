@@ -10,7 +10,7 @@ from metaflow.metaflow_current import current
 from ..card_utilities.async_cards import CardRefresher, AsyncPeriodicRefresher
 from ..card_utilities.extra_components import ArtifactTable, LineChart
 from ..card_utilities.injector import CardDecoratorInjector
-from .constants import DEFAULT_FILE_NAME
+from .constants import DEFAULT_FILE_NAME, DEFAULT_PROFILER_FILE_NAME
 
 
 def json_to_artifact_table(data):
@@ -276,8 +276,11 @@ class HuggingfaceProfilingCardRefresher(CardRefresher):
     CARD_ID = "training_profiling"
 
     def __init__(self) -> None:
-        self._profiling_table = {}
+        self._metrics_dict = {}
         self._rendered = False
+
+    def _translate_to_md(self, metric_value):
+        return "```%s```" % metric_value
 
     def render_card_fresh(self, current_card, data):
         self._rendered = True
@@ -293,8 +296,13 @@ class HuggingfaceProfilingCardRefresher(CardRefresher):
                 "## Profiling Information",
             )
         )
-        self._profiling_table = ArtifactTable(data["profiling_info"])
-        current_card.append(self._profiling_table)
+        for metric in data["metrics_info_dict"]:
+            self._metrics_dict[metric] = Markdown(
+                self._translate_to_md(data["metrics_info_dict"][metric]),
+            )
+            current_card.append(Markdown(f"### {metric}"))
+            current_card.append(self._metrics_dict[metric], id=metric)
+
         current_card.refresh()
 
     def on_startup(self, current_card):
@@ -329,7 +337,7 @@ class HuggingfaceProfilingCardRefresher(CardRefresher):
         data_object_keys = set(data_object.keys())
         if len(data_object_keys) == 0:
             return
-        if "profiling_info" not in data_object_keys:
+        if "metrics_info_dict" not in data_object_keys:
             return
         self.render_card_fresh(current_card, data_object)
 
@@ -340,7 +348,6 @@ class HuggingFaceCardDecorator(StepDecorator, CardDecoratorInjector):
     defaults = {
         "profiler": False,
     }
-
 
     def step_init(self, flow, graph, step_name, decorators, environment, flow_datastore, logger):
         self.attach_card_decorator(
@@ -388,7 +395,7 @@ class HuggingFaceCardDecorator(StepDecorator, CardDecoratorInjector):
                     HuggingfaceProfilingCardRefresher(),
                     updater_interval=5,
                     collector_interval=10,
-                    file_name="profiling.json",
+                    file_name=DEFAULT_PROFILER_FILE_NAME,
                 )
                 async_refresher_profiler.start()
             try:

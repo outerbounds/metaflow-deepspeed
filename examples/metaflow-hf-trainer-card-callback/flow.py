@@ -4,7 +4,7 @@ from metaflow import huggingface_card
 
 N_NODES = 2
 IMAGE = "docker.io/eddieob/deepspeed:6"
-MEMORY = "16000"
+MEMORY = "32000"
 N_GPU = 1
 N_CPU = 2
 

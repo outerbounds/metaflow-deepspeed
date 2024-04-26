@@ -21,23 +21,27 @@ try: # in case you want to download to local env without deepspeed
 except ImportError:
     pass
 
-from metaflow.huggingface_card_callback import MetaflowHuggingFaceCardCallback
+from metaflow.huggingface_card_callback import MetaflowHuggingFaceCardCallback, MetaflowHuggingFaceProfilerCallback
 
 def main(
     checkpoint_dir: str = "training_outputs",
     ds_name: str = "rotten_tomatoes",
     model_name: str = "distilbert-base-uncased",
-    split: str = "train[:20%]",
+    train_split: str = "train[:50%]",
+    eval_split: str = "validation",
     run_id: str = None,
     flow_name: str = None,
     local_rank: int = None,
     global_rank: int = None,
 ):
-    dataset = load_dataset(ds_name, split=split)
+    train_ds = load_dataset(ds_name, split=train_split)
+    eval_ds = load_dataset(ds_name, split=eval_split)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSequenceClassification.from_pretrained(model_name)
     tokenize_dataset = lambda dataset: tokenizer(dataset["text"])
-    dataset = dataset.map(tokenize_dataset, batched=True)
+    train_ds = train_ds.map(tokenize_dataset, batched=True)
+    eval_ds = eval_ds.map(tokenize_dataset, batched=True)
+
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
     training_args = TrainingArguments(
         output_dir=checkpoint_dir,
@@ -60,7 +64,8 @@ def main(
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=dataset,
+        train_dataset=train_ds,
+        eval_dataset=eval_ds,
         tokenizer=tokenizer,
         data_collator=data_collator,
         callbacks=[
@@ -70,6 +75,15 @@ def main(
                     "learning_rate",
                     "grad_norm",
                     "eval_loss",
+                ]
+            ),
+            MetaflowHuggingFaceProfilerCallback(
+                tracking_metrics= [
+                    "cpu_memory_usage", 
+                    "cuda_memory_usage",
+                    "self_cpu_memory_usage",
+                    "self_cuda_memory_usage"
+
                 ]
             )
         ],
