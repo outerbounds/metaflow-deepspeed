@@ -57,7 +57,7 @@ def main(
         save_strategy = "steps", 
         load_best_model_at_end=False,
         save_on_each_node=False, # default. Notice relation to DeepspeedHFTrainerS3Sync.push_from_all_nodes.
-
+        evaluation_strategy = "epoch",
         warmup_steps=1,
         report_to="none",
     )
