@@ -21,7 +21,7 @@ try: # in case you want to download to local env without deepspeed
 except ImportError:
     pass
 
-from metaflow.huggingface_card_callback import MetaflowHuggingFaceCardCallback, MetaflowHuggingFaceProfilerCallback
+from metaflow.huggingface_card_callback import MetaflowHuggingFaceCardCallback
 
 def main(
     checkpoint_dir: str = "training_outputs",
@@ -77,18 +77,10 @@ def main(
                     "eval_loss",
                 ]
             ),
-            MetaflowHuggingFaceProfilerCallback(
-                tracking_metrics= [
-                    "cpu_memory_usage", 
-                    "cuda_memory_usage",
-                    "self_cpu_memory_usage",
-                    "self_cuda_memory_usage"
-
-                ]
-            )
         ],
     )
     trainer.train()
+
 
 
 if __name__ == "__main__":

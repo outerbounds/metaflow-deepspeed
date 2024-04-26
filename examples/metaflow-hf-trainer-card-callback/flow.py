@@ -17,7 +17,7 @@ class MetaflowDeepspeedHFCallbackExample(FlowSpec):
     def start(self):
         self.next(self.train, num_parallel=N_NODES)
 
-    @huggingface_card(profiler=True)
+    @huggingface_card
     @gpu_profile(interval=1)
     @kubernetes(image=IMAGE, memory=MEMORY, cpu=N_CPU, gpu=N_GPU)
     @deepspeed

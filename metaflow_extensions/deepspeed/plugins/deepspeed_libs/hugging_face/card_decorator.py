@@ -272,82 +272,9 @@ class HuggingfaceModelCardRefresher(CardRefresher):
         self.render_card_fresh(current_card, data_object)
 
 
-class HuggingfaceProfilingCardRefresher(CardRefresher):
-    CARD_ID = "training_profiling"
-
-    def __init__(self) -> None:
-        self._metrics_dict = {}
-        self._rendered = False
-
-    def _translate_to_md(self, metric_value):
-        return "```%s```" % metric_value
-
-    def render_card_fresh(self, current_card, data):
-        self._rendered = True
-        current_card.clear()
-        current_card.append(
-            Markdown(
-                "# Huggingface Model Profiling Information \n## %s [Attempt:%s]"
-                % (current.pathspec, current.retry_count),
-            )
-        )
-        current_card.append(
-            Markdown(
-                "## Profiling Information",
-            )
-        )
-        for metric in data["metrics_info_dict"]:
-            self._metrics_dict[metric] = Markdown(
-                self._translate_to_md(data["metrics_info_dict"][metric]),
-            )
-            current_card.append(Markdown(f"### {metric}"))
-            current_card.append(self._metrics_dict[metric], id=metric)
-
-        current_card.refresh()
-
-    def on_startup(self, current_card):
-        current_card.append(
-            Markdown(
-                "# Huggingface Model Profiling Information\n## %s[Attempt:%s]"
-                % (current.pathspec, current.retry_count),
-            )
-        )
-        current_card.append(
-            Markdown(
-                "_waiting for data to appear_",
-            )
-        )
-        current_card.refresh()
-
-    def on_error(self, current_card, error_message):
-        if isinstance(error_message, FileNotFoundError):
-            return
-        if not self._rendered:
-            current_card.clear()
-            current_card.append(
-                Markdown(
-                    f"## Error: {str(error_message)}",
-                )
-            )
-            current_card.refresh()
-
-    def on_update(self, current_card, data_object):
-        if self._rendered:
-            return
-        data_object_keys = set(data_object.keys())
-        if len(data_object_keys) == 0:
-            return
-        if "metrics_info_dict" not in data_object_keys:
-            return
-        self.render_card_fresh(current_card, data_object)
-
 class HuggingFaceCardDecorator(StepDecorator, CardDecoratorInjector):
 
     name = "huggingface_card"
-
-    defaults = {
-        "profiler": False,
-    }
 
     def step_init(self, flow, graph, step_name, decorators, environment, flow_datastore, logger):
         self.attach_card_decorator(
@@ -364,19 +291,8 @@ class HuggingFaceCardDecorator(StepDecorator, CardDecoratorInjector):
             "blank",
             refresh_interval=0.5
         )
-        _show_profiler = self.attributes["profiler"]
-        if _show_profiler:
-            self.attach_card_decorator(
-                flow,
-                step_name,
-                HuggingfaceProfilingCardRefresher.CARD_ID,
-                "blank",
-                refresh_interval=20,
-            )
-
     
     def task_decorate(self, step_func, flow, graph, retry_count, max_user_code_retries, ubf_context):
-        _show_profiler = self.attributes["profiler"]
         def _wrapped_step_func(*args, **kwargs):
             async_refresher_model_card = AsyncPeriodicRefresher(
                 HuggingfaceModelCardRefresher(),
@@ -390,14 +306,6 @@ class HuggingFaceCardDecorator(StepDecorator, CardDecoratorInjector):
                 collector_interval=0.5,
                 file_name=DEFAULT_FILE_NAME,
             )
-            if _show_profiler:
-                async_refresher_profiler = AsyncPeriodicRefresher(
-                    HuggingfaceProfilingCardRefresher(),
-                    updater_interval=5,
-                    collector_interval=10,
-                    file_name=DEFAULT_PROFILER_FILE_NAME,
-                )
-                async_refresher_profiler.start()
             try:
                 async_refresher_model_card.start()
                 async_refresher_metrics.start()
@@ -405,7 +313,6 @@ class HuggingFaceCardDecorator(StepDecorator, CardDecoratorInjector):
             finally:
                 async_refresher_model_card.stop()
                 async_refresher_metrics.stop()
-                if _show_profiler:
-                    async_refresher_profiler.stop()
+
         return _wrapped_step_func
         
