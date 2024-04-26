@@ -96,7 +96,7 @@ class MetaflowHuggingFaceCardCallback(TrainerCallback):
                 "Train runtime": logs["train_runtime"],
                 "Train samples / sec": logs["train_samples_per_second"],
                 "Train steps / sec": logs["train_steps_per_second"],
-                "Total Floating point operations": logs["total_flos"],
-                "TFLOPs": logs["total_flos"] // 1e12 / logs["train_runtime"],
+                # "Total Floating point operations": logs["total_flos"],
+                # "TFLOPs": logs["total_flos"] // 1e12 / logs["train_runtime"],
             }
         self._save()
