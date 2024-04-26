@@ -21,8 +21,6 @@ class MetaflowHuggingFaceCardCallback(TrainerCallback):
 
     MODEL_CARD_ID = "huggingface_model_card"
 
-    PROFILING_CARD_ID = "huggingface_profiling_card"
-
     DEFAULT_FILE_NAME = DEFAULT_FILE_NAME
 
     _metrics = defaultdict(list)
