@@ -148,7 +148,10 @@ class DeepspeedExecutor:
                 )  # TODO: other mechanism to flush buffer, especially in progress bar case.
 
             if process.returncode != 0:
-                return False, process.stderr.read().decode("utf-8")
+                if process.stderr is not None:
+                    return False, process.stderr.read().decode("utf-8")
+                else:
+                    return False, None
             return True, None
 
     def _resolve_storage_paths(
