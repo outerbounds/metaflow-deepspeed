@@ -40,12 +40,11 @@ class DeepspeedDecorator(ParallelDecorator):
         current._update_env(
             {
                 "deepspeed": DeepspeedExecutor(
-                    hosts,
-                    n_slots_per_host,
-                    is_gpu,
-                    flow,
-                    self.attributes["worker_polling_freq"],
-                    self.flow_datastore,
+                    hosts=hosts,
+                    n_slots_per_host=n_slots_per_host,
+                    is_gpu=is_gpu,
+                    worker_polling_freq=self.attributes["worker_polling_freq"],
+                    flow_datastore=self.flow_datastore,
                 )
             }
         )

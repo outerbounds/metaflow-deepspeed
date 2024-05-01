@@ -14,20 +14,12 @@ class SingleNodeDeepspeedTest(FlowSpec):
     @step
     def train(self):
         from metaflow.plugins.deepspeed_libs.executor import DeepspeedExecutor
-        from metaflow.plugins.deepspeed_libs.mpi_setup import setup_mpi_env
-
-        hosts = setup_mpi_env(
-            flow_datastore=self._datastore.parent_datastore,
-            n_slots=N_CPU,
+        executor = DeepspeedExecutor.for_single_node(
+            flow=self, 
+            use_gpu=False, 
+            n_slots = N_CPU
         )
-        exe = DeepspeedExecutor(
-            hosts=hosts,
-            is_gpu=False,  # default
-            flow=self,
-            flow_datastore=self._datastore.parent_datastore,
-            # n_slots_per_host=N_GPU, # sets num_gpus arg. Alternatively, use deepspeed_args in exe.run.
-        )
-        exe.run(entrypoint="train.py")
+        executor.run(entrypoint="train.py")
         self.next(self.end)
 
     @step
