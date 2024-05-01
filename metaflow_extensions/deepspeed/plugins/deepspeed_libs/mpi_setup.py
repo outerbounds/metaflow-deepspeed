@@ -238,11 +238,11 @@ def setup_known_hosts(hosts, ubf_context, node_index):
 
 
 def setup_mpi_env(
-    ubf_context,
-    all_nodes_started_timeout,
-    n_slots,
     flow_datastore,
-    polling_frequency=0.1,
+    ubf_context: str = UBF_CONTROL,
+    all_nodes_started_timeout: int = 600,
+    n_slots: int = 1,
+    polling_frequency: float = 0.1,
 ):
     """
     1. create ssh keys on each host

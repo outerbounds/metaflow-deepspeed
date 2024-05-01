@@ -94,10 +94,10 @@ class DeepspeedDecorator(ParallelDecorator):
     ):
         "Return a list of strings of hostnames of nodes to use for MPI"
         hosts = setup_mpi_env(
-            self._ubf_context,
-            self.attributes["all_nodes_started_timeout"],
-            self.n_slots,
-            self.flow_datastore,
+            ubf_context=self._ubf_context,
+            all_nodes_started_timeout=self.attributes["all_nodes_started_timeout"],
+            n_slots=self.n_slots,
+            flow_datastore=self.flow_datastore,
         )
         self._setup_current(
             hosts=hosts, n_slots_per_host=self.n_slots, is_gpu=self.is_gpu, flow=flow

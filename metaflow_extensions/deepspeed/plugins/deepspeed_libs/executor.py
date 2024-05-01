@@ -63,7 +63,7 @@ class DeepspeedExecutor:
         is_gpu: bool = False,
         flow=None,
         worker_polling_freq: int = 10,
-        flow_datastore=None,
+        flow_datastore = None,
     ) -> None:
         self.is_gpu = is_gpu
         self.n_slots_per_host = n_slots_per_host
@@ -260,7 +260,7 @@ class DeepspeedExecutor:
         """upon completion returns the final path of the `cloud_output_dir` if `push_results_dir_to_cloud` is set to true"""
         from metaflow import current
 
-        node_index = current.parallel.node_index  # assumes parallel
+        node_index = current.parallel.node_index or 0
         datastore = DeepspeedDatastore(
             flow_datastore=self._flow_datastore, pathspec=current.pathspec
         )
