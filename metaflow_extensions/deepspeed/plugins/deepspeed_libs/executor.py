@@ -61,14 +61,12 @@ class DeepspeedExecutor:
         hosts: List[str],
         n_slots_per_host: int = 1,
         is_gpu: bool = False,
-        flow=None,
         worker_polling_freq: int = 10,
-        flow_datastore=None,
+        flow_datastore = None,
     ) -> None:
         self.is_gpu = is_gpu
         self.n_slots_per_host = n_slots_per_host
         self.hosts = hosts
-        self.flow = flow
         self.worker_polling_freq = worker_polling_freq
         self._flow_datastore = flow_datastore
         self._heartbeat_thread = None  # This is only set on the control task
@@ -260,7 +258,7 @@ class DeepspeedExecutor:
         """upon completion returns the final path of the `cloud_output_dir` if `push_results_dir_to_cloud` is set to true"""
         from metaflow import current
 
-        node_index = current.parallel.node_index  # assumes parallel
+        node_index = current.parallel.node_index or 0
         datastore = DeepspeedDatastore(
             flow_datastore=self._flow_datastore, pathspec=current.pathspec
         )
@@ -294,3 +292,16 @@ class DeepspeedExecutor:
                 file=sys.stderr,
             )
             return datastore.get_datastore_file_location(cloud_output_dir)
+
+    @classmethod
+    def for_single_node(cls, flow, use_gpu=False, n_slots=1):
+        from .mpi_setup import setup_mpi_env
+        flow_datastore = flow._datastore.parent_datastore
+        hosts = setup_mpi_env(flow_datastore=flow_datastore, n_slots=n_slots, )
+        executor = cls(
+            hosts=hosts, 
+            n_slots_per_host=n_slots,
+            is_gpu=use_gpu,
+            flow_datastore=flow_datastore
+        )
+        return executor
