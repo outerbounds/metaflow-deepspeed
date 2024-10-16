@@ -128,7 +128,7 @@ def _worker_task_ssh_setup(datastore, ssh_dir, max_wait_time=600, frequency=0.1)
             g.write(data[control_key_path].text)
 
 
-def update_ssh_config_and_restart_sshd(ssh_config_options, ubf_context, node_index):
+def update_ssh_config_and_restart_sshd(ssh_config_options, ubf_context, node_index, use_sudo=False):
     # This is un-used but can be used later if necessary.
     with open("/etc/ssh/sshd_config", "a") as f:
         f.write("\n".join(ssh_config_options))
@@ -136,7 +136,7 @@ def update_ssh_config_and_restart_sshd(ssh_config_options, ubf_context, node_ind
     # TODO : Here we require sudo access and sshd service restart. This should be done better!
     try:
         result = subprocess.run(
-            ["sudo", "service", "ssh", "restart"],
+            (["sudo"] if use_sudo else []) + ["service", "ssh", "restart"],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -243,6 +243,7 @@ def setup_mpi_env(
     all_nodes_started_timeout: int = 600,
     n_slots: int = 1,
     polling_frequency: float = 0.1,
+    use_sudo: bool = False,
 ):
     """
     1. create ssh keys on each host
@@ -301,6 +302,7 @@ def setup_mpi_env(
         ],
         ubf_context,
         node_index,
+        use_sudo=use_sudo
     )
     # Write all the IP's shared by the workers to the hostfile.
 
