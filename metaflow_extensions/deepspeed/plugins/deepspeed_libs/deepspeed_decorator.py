@@ -29,7 +29,7 @@ Control Flow :
 class DeepspeedDecorator(ParallelDecorator):
     name = "deepspeed"
     # TODO : Safe rename `all_nodes_started_timeout` to something more intuitive.
-    defaults = {"all_nodes_started_timeout": 600, "worker_polling_freq": 0.5}
+    defaults = {"all_nodes_started_timeout": 600, "worker_polling_freq": 0.5, "use_sudo": False}
     IS_PARALLEL = True
 
     requires_passwordless_ssh = (
@@ -50,7 +50,7 @@ class DeepspeedDecorator(ParallelDecorator):
         )
 
     def step_init(self, flow, graph, step, decos, environment, flow_datastore, logger):
-
+        super().step_init(flow, graph, step, decos, environment, flow_datastore, logger)
         self.environment = environment
         self.flow_datastore = flow_datastore
 
@@ -86,6 +86,19 @@ class DeepspeedDecorator(ParallelDecorator):
         inputs,
     ):
         self._ubf_context = ubf_context
+        super().task_pre_step(
+            step_name,
+            task_datastore,
+            metadata,
+            run_id,
+            task_id,
+            flow,
+            graph,
+            retry_count,
+            max_user_code_retries,
+            ubf_context,
+            inputs,
+        )
 
     def setup_distributed_env(
         self,
@@ -97,6 +110,7 @@ class DeepspeedDecorator(ParallelDecorator):
             all_nodes_started_timeout=self.attributes["all_nodes_started_timeout"],
             n_slots=self.n_slots,
             flow_datastore=self.flow_datastore,
+            use_sudo = self.attributes.get("use_sudo", False),
         )
         self._setup_current(
             hosts=hosts, n_slots_per_host=self.n_slots, is_gpu=self.is_gpu, flow=flow
